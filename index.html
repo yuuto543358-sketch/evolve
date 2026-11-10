@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>EVOLVE</title>
   <meta name="description" content="EVOLVE（イボルブ）— 昨日の自分を、少しずつ超えていく。身体づくり総合管理アプリ">
-  <meta name="theme-color" content="#F7F8F6">
+  <meta name="theme-color" content="#F3F5F4">
   <meta name="color-scheme" content="light">
 
   <!-- ホーム画面に追加したとき、アプリのように表示するための設定 -->
@@ -19,6 +19,18 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
   <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
+  <!-- iPhoneの起動画面 -->
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1320x2868.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1206x2622.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1284x2778.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1242x2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="./icons/splash/splash-750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
   <link rel="icon" type="image/svg+xml" href="./icons/favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
 
@@ -27,15 +39,24 @@
 <body>
   <div id="app">
     <div id="demo-banner" hidden>デモデータを表示中です（あなたの記録とは別に保存されています）<button type="button" id="demo-exit">デモを終了</button></div>
-    <main id="view" aria-live="polite">
-      <div class="boot">
-        <img src="./icons/logo-mark.svg" alt="" width="64" height="64">
-        <p>EVOLVE</p>
-      </div>
-    </main>
+    <header id="navbar" hidden><span class="nav-title"></span></header>
+    <main id="view" aria-live="polite"></main>
     <nav id="tabbar" hidden aria-label="メインメニュー"></nav>
   </div>
   <div id="overlay-root"></div>
+  <!-- 起動画面 -->
+  <div id="splash" aria-hidden="true">
+    <svg class="splash-mark" width="84" height="84" viewBox="120 110 300 300">
+      <defs><linearGradient id="spg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6E2A8"/><stop offset="1" stop-color="#C99B47"/></linearGradient></defs>
+      <g transform="translate(-6 -10)" fill="none" stroke-linecap="round" stroke="#22806F" stroke-width="30">
+        <path class="a1" d="M146 382 A 84 84 0 0 1 230 298" opacity=".4" pathLength="1"/>
+        <path class="a2" d="M146 382 A 158 158 0 0 1 304 224" opacity=".7" pathLength="1"/>
+        <path class="a3" d="M146 382 A 232 232 0 0 1 362 152" pathLength="1"/>
+        <circle class="dot" cx="384" cy="146" r="25" fill="url(#spg)" stroke="none"/>
+      </g>
+    </svg>
+    <p class="splash-word">EVOLVE</p>
+  </div>
   <noscript><p style="padding:24px">EVOLVEを使うにはJavaScriptを有効にしてください。</p></noscript>
   <script type="module" src="./js/app.js"></script>
 </body>

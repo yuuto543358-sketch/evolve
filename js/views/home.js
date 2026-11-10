@@ -5,6 +5,7 @@ import { computeGame, STAT_DEFS, rankFor, levelTimeline, ACHIEVEMENTS, proteinOf
 import { workoutKcal, cardioRecordKcal } from '../calc.js';
 import { icon, logoMark } from '../icons.js';
 import { ring, radar, miniBars } from '../charts.js';
+import { largeTitle, secH, countAttr } from '../ui.js';
 import { openDaySheet, unitLabel } from '../records.js';
 import { notify } from '../app.js';
 import { today, addDays, fmtNum, fmtDate, greeting, esc, parseYmd, ymd, pad, diffDays, relDay, byDateDesc } from '../util.js';
@@ -18,20 +19,27 @@ export function render(root, app) {
   const prevWeek = computeGame({ asOf: addDays(t, -7) });
   const p = S.profile || {};
 
+  const d = parseYmd(t);
+  const wd = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
   root.innerHTML = `
   <div class="page home">
-    <header class="app-head">
-      <div class="brand">${logoMark(30, 5)}<span class="wordmark">EVOLVE</span></div>
-      <span class="head-date">${fmtDate(t)}</span>
-    </header>
-    <p class="greet">${greeting()}。<span>昨日の自分を、少しずつ超えていく。</span></p>
-
+    ${largeTitle({
+      kicker: `${d.getMonth() + 1}月${d.getDate()}日 ${wd}曜日`,
+      title: greeting(),
+      short: 'EVOLVE',
+      right: `<a class="avatar" href="#profile" aria-label="プロフィール">${logoMark(26, g.stage.index)}<span class="avatar-lv num">${g.level}</span></a>`,
+    })}
     ${levelCard(g)}
+    ${secH('今日のおすすめ')}
     ${recommendCard(g, p)}
+    ${secH('ステータス', '<span class="sec-note">今週の伸び</span>')}
     ${statusCard(g, prevWeek)}
+    ${secH(`${Number(t.slice(5, 7))}月の積み重ね`)}
     ${monthCard(g)}
     ${calendarCard(g)}
+    ${secH('最近の成長記録')}
     ${feedCard(g)}
+    <p class="tagline">${logoMark(16, 5)}昨日の自分を、少しずつ超えていく。</p>
   </div>`;
 
   root.onclick = async (e) => {
@@ -63,34 +71,30 @@ async function addShake() {
 function levelCard(g) {
   const progress = g.into / g.next;
   const todayXP = xpOnDate(g, today());
-  // 直近7日のXP
   const days = Array.from({ length: 7 }, (_, i) => addDays(today(), i - 6));
   const vals = days.map((d) => xpOnDate(g, d));
   const labels = days.map((d) => ['日', '月', '火', '水', '木', '金', '土'][parseYmd(d).getDay()]);
   return `
-  <section class="card level-card">
-    <div class="lv-top">
-      <div class="lv-ring">
-        ${ring(progress, { size: 128, stroke: 9, gold: true })}
-        <div class="lv-center">
-          <span class="lv-label">LEVEL</span>
-          <span class="lv-num">${g.level}</span>
-        </div>
+  <section class="hero" aria-label="レベル">
+    <div class="hero-water" aria-hidden="true">${logoMark(260, 5, { color: '#ffffff' })}</div>
+    <div class="hero-top">
+      <div class="hero-ring">
+        ${ring(progress, { size: 118, stroke: 8, track: 'rgba(255,255,255,.14)', grad: ['#F6E2A8', '#D9B86A', '#C99B47'] })}
+        <div class="hero-ring-c"><span>LEVEL</span><strong class="num" ${countAttr('lv', g.level)}>${g.level}</strong></div>
       </div>
-      <div class="lv-info">
-        <p class="lv-stage">${logoMark(18, g.stage.index)}<span>${g.stage.name} ・ ${g.stage.label}</span></p>
-        <p class="lv-title">${esc(g.title)}</p>
-        <dl class="lv-nums">
-          <div><dt>累計経験値</dt><dd>${fmtNum(g.totalXP)}<small>XP</small></dd></div>
-          <div><dt>次のレベルまで</dt><dd>${fmtNum(g.toNext)}<small>XP</small></dd></div>
-        </dl>
+      <div class="hero-meta">
+        <span class="stage-chip">${logoMark(14, g.stage.index, { color: '#ffffff' })}${g.stage.name}・${g.stage.label}</span>
+        <h2 class="hero-title">${esc(g.title)}</h2>
+        <p class="hero-total"><strong class="num" ${countAttr('xp', g.totalXP)}>${fmtNum(g.totalXP)}</strong><span>XP</span></p>
       </div>
     </div>
-    <div class="xp-bar" role="progressbar" aria-valuenow="${Math.round(progress * 100)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${(progress * 100).toFixed(1)}%"></i></div>
-    <div class="xp-bar-labels"><span>Lv${g.level}</span><span>${fmtNum(g.into)} / ${fmtNum(g.next)} XP</span><span>Lv${g.level + 1}</span></div>
-    <div class="week-xp">
-      <div class="week-xp-head"><span>この7日間の積み重ね</span><span class="${todayXP ? 'gold' : 'muted'}">今日 ${todayXP ? '+' + todayXP : 0} XP</span></div>
-      ${miniBars(vals, { labels, color: 'var(--primary)' })}
+    <div class="hero-progress">
+      <div class="hero-bar" role="progressbar" aria-valuenow="${Math.round(progress * 100)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${(progress * 100).toFixed(1)}%"></i></div>
+      <div class="hero-bar-l"><span>Lv${g.level + 1} まで <b class="num">${fmtNum(g.toNext)}</b> XP</span><span class="num">${fmtNum(g.into)} / ${fmtNum(g.next)}</span></div>
+    </div>
+    <div class="hero-week">
+      <div class="hero-week-h"><span>この7日間</span><span class="today-xp ${todayXP ? 'on' : ''}">今日 <b class="num">+${todayXP}</b> XP</span></div>
+      ${miniBars(vals, { labels, color: 'rgba(255,255,255,.55)', empty: 'rgba(255,255,255,.14)', highlight: 6, hiColor: '#E7C77E', labelColor: 'rgba(255,255,255,.6)', height: 50 })}
     </div>
   </section>`;
 }
@@ -109,7 +113,7 @@ function recommendCard(g, p) {
   const lastCar = lastDateOf(S.cardio);
 
   if (exercisedToday) {
-    recs.push({ ic: 'check', done: true, title: '今日の運動、おつかれさまでした', sub: 'ストレッチとしっかりした睡眠で、身体の回復も成長のうち。' });
+    recs.push({ ic: 'dumbbell', tone: 'green', done: true, title: '今日の運動、おつかれさまでした', sub: 'ストレッチとしっかりした睡眠で、身体の回復も成長のうち。' });
   } else if (!lastStr || diffDays(t, lastStr) >= 2) {
     // しばらく鍛えていない部位から提案
     const parts = { upper: '上半身', lower: '下半身', core: '体幹' };
@@ -127,7 +131,7 @@ function recommendCard(g, p) {
       const reps = last ? last.reps : (ex.unit === 'sec' ? 30 : 10);
       const sets = last ? last.sets : 3;
       recs.push({
-        ic: 'dumbbell',
+        ic: 'dumbbell', tone: 'green',
         title: `${ex.name} ${reps}${unitLabel(ex.unit)}×${sets}セット`,
         sub: lastStr ? `前回の筋トレは${relDay(lastStr)}。今日は${parts[part]}を少しだけ。` : '最初の一歩は、たった1セットからでOK。',
         btn: '記録する', go: 'training', params: { mode: 'strength', add: ex.id },
@@ -136,7 +140,7 @@ function recommendCard(g, p) {
   } else {
     const walkMin = 20;
     recs.push({
-      ic: 'walk', title: `ウォーキング ${walkMin}分`,
+      ic: 'walk', tone: 'blue', title: `ウォーキング ${walkMin}分`,
       sub: lastCar ? `前回の有酸素は${relDay(lastCar)}。軽く歩くだけで持久力が育ちます。` : '筋トレの翌日は、軽い有酸素で持久力アップ。',
       btn: '記録する', go: 'training', params: { mode: 'cardio', kind: 'walk' },
     });
@@ -145,11 +149,11 @@ function recommendCard(g, p) {
   const goal = p.proteinGoal || 100;
   const pr = proteinOf(S.meals.filter((m) => m.date === t));
   if (pr.total >= goal) {
-    recs.push({ ic: 'check', done: true, title: `タンパク質 ${fmtNum(pr.total)}g 目標達成`, sub: '食事を楽しみながら、しっかり摂れています。' });
+    recs.push({ ic: 'cup', tone: 'gold', done: true, title: `タンパク質 ${fmtNum(pr.total)}g 目標達成`, sub: '食事を楽しみながら、しっかり摂れています。' });
   } else {
     const need = Math.ceil(goal - pr.total);
     recs.push({
-      ic: 'cup', title: `タンパク質 あと ${need}g`,
+      ic: 'cup', tone: 'gold', title: `タンパク質 あと ${need}g`,
       sub: pr.total ? `今日は ${fmtNum(pr.total)}g。プロテイン1杯で近づけます。` : '食事のついでに、タンパク質を少し意識してみよう。',
       shake: true,
     });
@@ -158,30 +162,27 @@ function recommendCard(g, p) {
   const lastBody = lastDateOf(S.body);
   const lastPhoto = lastDateOf(S.photos);
   if (!lastBody || diffDays(t, lastBody) >= 7) {
-    recs.push({ ic: 'scale', title: '体重を測ってみよう', sub: '週に1回で十分。増えても減っても、すべて大切なデータです。', btn: '測定する', go: 'growth', params: { add: 'body' } });
+    recs.push({ ic: 'scale', tone: 'sage', title: '体重を測ってみよう', sub: '週に1回で十分。増えても減っても、すべて大切なデータです。', btn: '測定する', go: 'growth', params: { add: 'body' } });
   } else if (!lastPhoto || diffDays(t, lastPhoto) >= 30) {
-    recs.push({ ic: 'camera', title: '今の身体を写真に残そう', sub: '体重だけでは見えない変化が、写真には残ります。', btn: '撮影する', go: 'growth', params: { tab: 'photo' } });
+    recs.push({ ic: 'camera', tone: 'slate', title: '今の身体を写真に残そう', sub: '体重だけでは見えない変化が、写真には残ります。', btn: '撮影する', go: 'growth', params: { tab: 'photo' } });
   }
 
   return `
-  <section class="card">
-    <h2 class="card-h">${icon('target', 18)}今日のおすすめ</h2>
-    <div class="rec-cards">
-      ${recs.slice(0, 3).map((r) => `
-        <div class="reco ${r.done ? 'done' : ''}">
-          <span class="reco-ic">${icon(r.ic, 18)}</span>
-          <div class="reco-main"><strong>${esc(r.title)}</strong><span>${esc(r.sub)}</span></div>
-          ${r.shake ? `<button type="button" class="btn btn-sm btn-gold" data-shake>${icon('plus', 14)}${S.settings.proteinPerShake}g</button>` : ''}
-          ${r.btn ? `<button type="button" class="btn btn-sm btn-soft" data-go="${r.go}" data-params='${JSON.stringify(r.params)}'>${r.btn}</button>` : ''}
-        </div>`).join('')}
-    </div>
+  <section class="card list-card">
+    ${recs.slice(0, 3).map((r) => `
+      <div class="reco ${r.done ? 'done' : ''} tone-${r.tone || 'green'}">
+        <span class="reco-ic">${icon(r.ic, 19)}</span>
+        <div class="reco-main"><strong>${esc(r.title)}</strong><span>${esc(r.sub)}</span></div>
+        ${r.shake ? `<button type="button" class="pill-btn gold" data-shake>${icon('plus', 13)}${S.settings.proteinPerShake}g</button>` : ''}
+        ${r.btn ? `<button type="button" class="pill-btn" data-go="${r.go}" data-params='${JSON.stringify(r.params)}'>${r.btn}</button>` : ''}
+        ${r.done ? `<span class="reco-done">${icon('check', 16)}</span>` : ''}
+      </div>`).join('')}
   </section>`;
 }
 
 function statusCard(g, prev) {
   return `
   <section class="card">
-    <h2 class="card-h">${icon('spark', 18)}ステータス<span class="card-h-note">今週の伸び</span></h2>
     <div class="status-wrap">
       <div class="status-radar">${radar(g.stats, STAT_DEFS, { size: 200 })}</div>
       <ul class="stat-list">
@@ -190,7 +191,8 @@ function statusCard(g, prev) {
           return `<li style="--c:${s.color}">
             <span class="stat-name">${s.name}</span>
             <span class="stat-rank">${rankFor(v)}</span>
-            <span class="stat-val">${fmtNum(v)}</span>
+            <span class="stat-val num" ${countAttr('st-' + s.id, v)}>${fmtNum(v)}</span>
+            <span class="stat-meter"><i style="width:${Math.min(100, (v / Math.max(60, ...Object.values(g.stats)) / 1.15) * 100).toFixed(1)}%"></i></span>
             <span class="stat-gain ${gain > 0 ? 'up' : ''}">${gain > 0 ? '+' + gain : '±0'}</span>
           </li>`;
         }).join('')}
@@ -209,18 +211,14 @@ function monthCard(g) {
   const sessions = strengthDays + cs.length;
   const kcal = ws.reduce((t, w) => t + workoutKcal(w), 0) + cs.reduce((t, c) => t + cardioRecordKcal(c), 0);
   const km = cs.reduce((t, c) => t + (Number(c.distanceKm) || 0), 0);
-  const month = Number(m.slice(5));
-  return `
-  <section class="card">
-    <h2 class="card-h">${icon('calendar', 18)}${month}月の積み重ね</h2>
-    <div class="kpis">
-      <div class="kpi"><span class="kpi-v">${exDays.size}<small>日</small></span><span class="kpi-l">運動日数</span></div>
-      <div class="kpi"><span class="kpi-v">${sessions}<small>回</small></span><span class="kpi-l">運動回数</span></div>
-      <div class="kpi"><span class="kpi-v">${fmtNum(kcal)}<small>kcal</small></span><span class="kpi-l">消費目安</span></div>
-      <div class="kpi"><span class="kpi-v">${g.currentStreak}<small>日</small></span><span class="kpi-l">連続記録</span></div>
-    </div>
-    ${km ? `<p class="muted small center">有酸素の距離 ${fmtNum(km, 1)}km ・ ベスト連続記録 ${g.bestStreak}日</p>` : `<p class="muted small center">ベスト連続記録 ${g.bestStreak}日 ・ 休んだ日があっても大丈夫</p>`}
-  </section>`;
+    return `
+  <div class="kpis">
+    <div class="kpi tone-green"><span class="kpi-ic">${icon('calendar', 16)}</span><span class="kpi-v num">${exDays.size}<small>日</small></span><span class="kpi-l">運動日数</span></div>
+    <div class="kpi tone-blue"><span class="kpi-ic">${icon('bolt', 16)}</span><span class="kpi-v num">${sessions}<small>回</small></span><span class="kpi-l">運動回数</span></div>
+    <div class="kpi tone-amber"><span class="kpi-ic">${icon('flame', 16)}</span><span class="kpi-v num">${fmtNum(kcal)}<small>kcal</small></span><span class="kpi-l">消費カロリー目安</span></div>
+    <div class="kpi tone-gold"><span class="kpi-ic">${icon('spark', 16)}</span><span class="kpi-v num">${g.currentStreak}<small>日</small></span><span class="kpi-l">連続記録（ベスト${g.bestStreak}日）</span></div>
+  </div>
+  ${km ? `<p class="foot-note">有酸素の距離 ${fmtNum(km, 1)}km ・ 休んだ日があっても大丈夫</p>` : ''}`;
 }
 
 function calendarCard(g) {
@@ -295,7 +293,6 @@ function feedCard(g) {
   const list = events.slice(0, 7);
   return `
   <section class="card">
-    <h2 class="card-h">${icon('growth', 18)}最近の成長記録</h2>
     <ol class="feed">
       ${list.map((e) => `<li class="${e.gold ? 'gold' : ''}"><span class="feed-ic">${icon(e.ic, 16)}</span><span class="feed-text">${e.text}</span><time>${relDay(e.date)}</time></li>`).join('')}
     </ol>

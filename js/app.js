@@ -4,7 +4,8 @@ import { S } from './store.js';
 import { isDemo, setDemo, deleteDatabase } from './db.js';
 import { computeGame, ACHIEVEMENTS } from './game.js';
 import { icon } from './icons.js';
-import { installGlobalHandlers, toast, celebrateLevelUp, celebrateAchievement, confirmDialog } from './ui.js';
+import { installGlobalHandlers, toast, celebrateLevelUp, celebrateAchievement, confirmDialog, animateUI } from './ui.js';
+import { openQuickAdd } from './quick.js';
 import * as home from './views/home.js';
 import * as training from './views/training.js';
 import * as nutrition from './views/nutrition.js';
@@ -22,6 +23,7 @@ const TABS = [
 
 const viewEl = document.getElementById('view');
 const tabbar = document.getElementById('tabbar');
+const navbar = document.getElementById('navbar');
 let current = 'home';
 let params = {};
 let lastGame = null;
@@ -53,12 +55,33 @@ function go(id, p = {}) {
 }
 
 function renderTabbar() {
-  tabbar.innerHTML = TABS.map((t) => `
-    <a href="#${t.id}" class="tab ${t.id === current ? 'on' : ''}" aria-current="${t.id === current ? 'page' : 'false'}">
-      ${icon(t.icon, 23)}<span>${t.label}</span>
-    </a>`).join('');
+  const idx = TABS.findIndex((t) => t.id === current);
+  tabbar.innerHTML = `
+    <div class="tabs" style="--n:${TABS.length};--i:${idx}">
+      <span class="tab-thumb" aria-hidden="true"></span>
+      ${TABS.map((t) => `
+      <a href="#${t.id}" class="tab ${t.id === current ? 'on' : ''}" data-tab="${t.id}" aria-current="${t.id === current ? 'page' : 'false'}">
+        ${icon(t.icon, 22)}<span>${t.label}</span>
+      </a>`).join('')}
+    </div>
+    <button type="button" class="fab" data-quick aria-label="記録する">${icon('plus', 26)}</button>`;
 }
 
+/** 大きなタイトルが隠れたら、上部に小さなタイトルを表示（iOS風） */
+let titleEl = null;
+function updateNavbar() {
+  if (!titleEl) { navbar.classList.remove('show'); return; }
+  const r = titleEl.getBoundingClientRect();
+  navbar.classList.toggle('show', r.bottom < navbar.offsetHeight - 4);
+}
+let navTick = false;
+window.addEventListener('scroll', () => {
+  if (navTick) return;
+  navTick = true;
+  requestAnimationFrame(() => { navTick = false; updateNavbar(); });
+}, { passive: true });
+
+let lastTab = null;
 function render(scrollTop = true) {
   const tab = TABS.find((t) => t.id === current);
   app.game = computeGame();
@@ -68,8 +91,18 @@ function render(scrollTop = true) {
     console.error(err);
     viewEl.innerHTML = `<div class="page"><div class="card"><h2>表示中に問題が発生しました</h2><p class="muted">${String(err.message || err)}</p><button class="btn btn-primary" onclick="location.reload()">再読み込み</button></div></div>`;
   }
+  if (lastTab !== current) {
+    viewEl.classList.remove('view-enter');
+    void viewEl.offsetWidth;
+    viewEl.classList.add('view-enter');
+    lastTab = current;
+  }
   renderTabbar();
+  titleEl = viewEl.querySelector('.large-title h1');
+  navbar.querySelector('.nav-title').textContent = titleEl ? (titleEl.dataset.short || titleEl.textContent) : '';
+  animateUI(viewEl);
   if (scrollTop) window.scrollTo(0, 0);
+  updateNavbar();
 }
 
 function refresh() {
@@ -115,6 +148,16 @@ async function startApp() {
   lastGame = computeGame();
   if (!S.meta.lastSeenLevel) await store.setMeta({ lastSeenLevel: lastGame.level });
   tabbar.hidden = false;
+  navbar.hidden = false;
+  tabbar.addEventListener('click', (e) => {
+    if (e.target.closest('[data-quick]')) { openQuickAdd(app); return; }
+    const t = e.target.closest('[data-tab]');
+    // 選択中のタブをもう一度押すと一番上へ
+    if (t && t.dataset.tab === current && !location.hash.includes('?')) {
+      e.preventDefault();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  });
   const { id, p } = parseHash();
   current = id; params = p;
   render();
@@ -140,12 +183,14 @@ async function boot() {
     await store.loadAll();
   } catch (err) {
     viewEl.innerHTML = `<div class="page"><div class="card"><h2>データを読み込めませんでした</h2><p class="muted">${String(err.message || err)}</p><p class="muted small">プライベートブラウズでは保存できない場合があります。</p></div></div>`;
+    hideSplash();
     return;
   }
   if (isDemo() && !S.profile) {
     const { seedDemo } = await import('./demo.js');
     await seedDemo();
   }
+  hideSplash();
   if (!S.profile || !S.profile.onboarded) {
     tabbar.hidden = true;
     renderOnboarding(viewEl, async () => { await startApp(); });
@@ -154,6 +199,13 @@ async function boot() {
   }
   registerSW();
   requestPersist();
+}
+
+function hideSplash() {
+  const sp = document.getElementById('splash');
+  if (!sp) return;
+  sp.classList.add('hide');
+  setTimeout(() => sp.remove(), 500);
 }
 
 /** ブラウザに「データを消さないで」とお願いする */

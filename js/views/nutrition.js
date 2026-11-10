@@ -5,7 +5,7 @@ import { proteinOf } from '../game.js';
 import { workoutKcal, cardioRecordKcal, bmr } from '../calc.js';
 import { icon } from '../icons.js';
 import { ring, miniBars } from '../charts.js';
-import { dateField, toast } from '../ui.js';
+import { dateField, largeTitle, secH, countAttr } from '../ui.js';
 import { mealEditor, handleEditClick, SLOT_LABEL, SLOT_ICON } from '../records.js';
 import { notify } from '../app.js';
 import { today, esc, fmtNum, byDateDesc, addDays, parseYmd, fmtDateLong } from '../util.js';
@@ -35,15 +35,15 @@ export function render(root, app) {
 
   root.innerHTML = `
   <div class="page nutrition">
-    <header class="page-head"><h1>NUTRITION</h1>${dateField('date', date)}</header>
+    ${largeTitle({ kicker: 'NUTRITION', title: '食事と栄養', right: dateField('date', date) })}
 
-    <section class="card protein-card">
+    <section class="card protein-card ${remain ? '' : 'met'}">
       <div class="protein-top">
         <div class="protein-ring">
-          ${ring(pr.total / goal, { size: 150, stroke: 12, color: pr.total >= goal ? 'var(--gold)' : 'var(--primary)' })}
+          ${ring(pr.total / goal, { size: 156, stroke: 14, grad: pr.total >= goal ? ['#E3C989', '#C99B47'] : ['#3BB39E', '#1F8070'] })}
           <div class="pr-center">
             <span class="pr-label">タンパク質</span>
-            <span class="pr-val">${fmtNum(pr.total, 0)}<small>/${goal}g</small></span>
+            <span class="pr-val num"><b ${countAttr('pr-' + date, Math.round(pr.total))}>${fmtNum(pr.total, 0)}</b><small>/${goal}g</small></span>
           </div>
         </div>
         <div class="protein-side">
@@ -61,24 +61,23 @@ export function render(root, app) {
       ${shakes.length ? `<p class="hint center">${date === today() ? '今日' : 'この日'}は ${shakes.length}杯 記録済み ・ <button type="button" class="link" data-edit="meals" data-id="${shakes.sort(byDateDesc)[0].id}">最後の1杯を修正</button></p>` : ''}
     </section>
 
+    ${secH(`${date === today() ? '今日' : fmtDateLong(date)}の食事`)}
+    <div class="card list-card slots">
+      ${['breakfast', 'lunch', 'dinner', 'snack'].map((slot) => slotHTML(slot, meals.filter((m) => m.slot === slot))).join('')}
+    </div>
+    <p class="sec-hint">内容だけ・タンパク質だけの記録でもOK。食事を楽しみながら、タンパク質を少し意識するだけで十分です。</p>
+
+    ${secH('この7日間のタンパク質', `<span class="sec-note">目標達成 ${metDays}日</span>`)}
     <section class="card">
-      <h2 class="card-h">${icon('meal', 18)}${date === today() ? '今日' : fmtDateLong(date)}の食事</h2>
-      <div class="slots">
-        ${['breakfast', 'lunch', 'dinner', 'snack'].map((slot) => slotHTML(slot, meals.filter((m) => m.slot === slot))).join('')}
-      </div>
-      <p class="fine">内容だけ・タンパク質だけの記録でもOK。食事を楽しみながら、タンパク質を少し意識するだけで十分です。</p>
+      ${miniBars(vals, { labels, color: 'var(--primary)', height: 92, goal, highlight: 6, hiColor: 'var(--gold)' })}
+      <p class="chart-legend"><i class="lg-goal"></i>目標 ${goal}g</p>
     </section>
 
-    <section class="card">
-      <h2 class="card-h">${icon('leaf', 18)}この7日間のタンパク質<span class="card-h-note">目標達成 ${metDays}日</span></h2>
-      ${miniBars(vals, { labels, color: 'var(--primary)', height: 64 })}
-    </section>
-
-    <section class="card">
-      <button type="button" class="card-toggle" data-toggle-kcal>
-        <span class="card-h">${icon('flame', 18)}カロリーの参考値</span><span class="muted small">${showCalories ? '閉じる' : 'ひらく'}</span>
+    <section class="card disclosure ${showCalories ? 'open' : ''}">
+      <button type="button" class="disc-head" data-toggle-kcal>
+        <span class="disc-ic">${icon('flame', 17)}</span><span class="disc-title">カロリーの参考値</span><span class="disc-chev">${icon('down', 16)}</span>
       </button>
-      ${showCalories ? kcalHTML(meals) : ''}
+      ${showCalories ? `<div class="disc-body">${kcalHTML(meals)}</div>` : ''}
     </section>
   </div>`;
 
@@ -126,7 +125,7 @@ function slotHTML(slot, items) {
       <span class="slot-ic">${icon(SLOT_ICON[slot], 18)}</span>
       <strong>${SLOT_LABEL[slot]}</strong>
       ${items.length ? `<span class="slot-p">${fmtNum(p, 0)}g</span>` : ''}
-      <button type="button" class="btn btn-sm btn-soft" data-add-meal="${slot}">${icon('plus', 14)}記録</button>
+      <button type="button" class="add-btn" data-add-meal="${slot}" aria-label="${SLOT_LABEL[slot]}を記録">${icon('plus', 18)}</button>
     </div>
     ${items.length ? `<div class="slot-items">${items.sort((a, b) => a.createdAt - b.createdAt).map((m) => `
       <button type="button" class="slot-item" data-edit="meals" data-id="${m.id}">

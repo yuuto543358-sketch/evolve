@@ -2,7 +2,7 @@
 import * as store from './store.js';
 import { S, exerciseById } from './store.js';
 import { workoutKcal, cardioRecordKcal, cardioKind, CARDIO_KINDS, cardioKcal, speedOf } from './calc.js';
-import { openSheet, stepper, chips, choice, dateField, num, val, confirmDialog, toast } from './ui.js';
+import { openSheet, stepper, chips, choice, dateField, num, val, confirmDialog, toast, onSwipeDelete } from './ui.js';
 import { icon } from './icons.js';
 import { esc, fmtNum, fmtDateLong, today, byDateDesc } from './util.js';
 import { notify } from './app.js';
@@ -32,27 +32,40 @@ export function bodyText(b) {
   return parts.join(' ・ ') || '—';
 }
 
-/** 一覧の1行 */
-export function row({ ic, title, sub = '', right = '', attrs = '', color = '' }) {
-  return `<button type="button" class="rec-row" ${attrs}>
+/** 一覧の1行（左にスワイプすると削除ボタンが出ます） */
+export function row({ ic, title, sub = '', right = '', attrs = '', color = '', edit = null }) {
+  const inner = `<button type="button" class="rec-row ${edit ? 'swipe-front' : ''}" ${attrs}>
     <span class="rec-ic" ${color ? `style="--ic:${color}"` : ''}>${icon(ic, 18)}</span>
     <span class="rec-main"><span class="rec-title">${title}</span>${sub ? `<span class="rec-sub">${sub}</span>` : ''}</span>
     <span class="rec-right">${right}</span>
+    ${edit ? `<span class="rec-chev">${icon('right', 16)}</span>` : ''}
   </button>`;
+  if (!edit) return inner;
+  return `<div class="swipe"><button type="button" class="swipe-del" data-store="${edit.store}" data-id="${edit.id}" aria-label="削除">${icon('trash', 18)}<span>削除</span></button>${inner}</div>`;
 }
 
+const DELETE_LABEL = { workouts: '筋トレの記録を削除しました', cardio: '有酸素運動の記録を削除しました', meals: '食事の記録を削除しました', body: '身体測定の記録を削除しました' };
+onSwipeDelete(async (storeName, id) => {
+  const rec = S[storeName] && S[storeName].find((r) => r.id === id);
+  if (rec) await removeWithUndo(storeName, rec, DELETE_LABEL[storeName] || '削除しました');
+});
+
 export function workoutRow(w) {
-  return row({ ic: 'dumbbell', title: esc(w.exerciseName), sub: workoutText(w), right: `${fmtNum(workoutKcal(w))}<small>kcal</small>`, attrs: `data-edit="workouts" data-id="${w.id}"` });
+  return row({ ic: 'dumbbell', title: esc(w.exerciseName), sub: workoutText(w), right: `${fmtNum(workoutKcal(w))}<small>kcal</small>`, attrs: `data-edit="workouts" data-id="${w.id}"`, edit: { store: 'workouts', id: w.id } });
 }
 export function cardioRow(c) {
   const k = cardioKind(c.kind);
-  return row({ ic: k.icon, title: c.kind === 'other' && c.label ? esc(c.label) : k.name, sub: cardioText(c), right: `${fmtNum(cardioRecordKcal(c))}<small>kcal</small>`, attrs: `data-edit="cardio" data-id="${c.id}"`, color: 'var(--blue)' });
+  return row({ ic: k.icon, title: c.kind === 'other' && c.label ? esc(c.label) : k.name, sub: cardioText(c), right: `${fmtNum(cardioRecordKcal(c))}<small>kcal</small>`, attrs: `data-edit="cardio" data-id="${c.id}"`, edit: { store: 'cardio', id: c.id }, color: 'var(--blue)' });
 }
 export function mealRow(m) {
-  return row({ ic: SLOT_ICON[m.slot] || 'meal', title: m.slot === 'protein' ? 'プロテイン' : (esc(m.content) || SLOT_LABEL[m.slot]), sub: `${SLOT_LABEL[m.slot] || ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}`, right: `${fmtNum(m.protein || 0, 1)}<small>g</small>`, attrs: `data-edit="meals" data-id="${m.id}"`, color: 'var(--gold-deep)' });
+  return row({ ic: SLOT_ICON[m.slot] || 'meal', title: m.slot === 'protein' ? 'プロテイン' : (esc(m.content) || SLOT_LABEL[m.slot]), sub: `${SLOT_LABEL[m.slot] || ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}`, right: `${fmtNum(m.protein || 0, 1)}<small>g</small>`, attrs: `data-edit="meals" data-id="${m.id}"`, edit: { store: 'meals', id: m.id }, color: 'var(--gold-deep)' });
 }
 export function bodyRow(b) {
-  return row({ ic: 'scale', title: bodyText(b), sub: b.note ? esc(b.note) : '身体測定', attrs: `data-edit="body" data-id="${b.id}"`, color: 'var(--sage)' });
+  const parts = bodyText(b).split(' ・ ');
+  const title = b.weight ? parts.shift() : parts.shift();
+  const rest = parts.join(' ・ ');
+  const sub = [rest, b.note ? esc(b.note) : (rest ? '' : '身体測定')].filter(Boolean).join('<br>');
+  return row({ ic: 'scale', title, sub, attrs: `data-edit="body" data-id="${b.id}"`, edit: { store: 'body', id: b.id }, color: 'var(--sage)' });
 }
 
 /** data-edit 属性のついた行をタップしたときに編集画面を開く */
@@ -319,4 +332,9 @@ export function openDaySheet(date, game) {
 
 export async function confirmDelete(message) {
   return confirmDialog(message, { ok: '削除する', danger: true });
+}
+
+/** 記録がないときの表示 */
+export function emptyState(ic, title, sub = '') {
+  return `<div class="empty"><span class="empty-ic">${icon(ic, 24)}</span><strong>${title}</strong>${sub ? `<p>${sub}</p>` : ''}</div>`;
 }

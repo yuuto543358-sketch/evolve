@@ -3,11 +3,14 @@ import * as store from '../store.js';
 import { S, GOALS, APP_VERSION } from '../store.js';
 import { ACHIEVEMENTS, TITLES, XP_RULES, xpForLevel, STAT_DEFS } from '../game.js';
 import { icon, logoMark } from '../icons.js';
-import { openSheet, stepper, chips, choice, num, val, toast, confirmDialog } from '../ui.js';
+import { openSheet, stepper, chips, choice, num, val, toast, confirmDialog, largeTitle, secH } from '../ui.js';
+import { ring } from '../charts.js';
 import { exportBackup, restoreBackup, validateBackup, storageInfo } from '../backup.js';
 import { isDemo, setDemo, clearAll, deleteDatabase } from '../db.js';
 import { today, esc, fmtNum, diffDays, fmtDateLong, ymd } from '../util.js';
 import { notify } from '../app.js';
+
+let showAllAch = false;
 
 export function render(root, app) {
   const g = app.game;
@@ -18,94 +21,113 @@ export function render(root, app) {
   const nextTitle = TITLES.find(([lv]) => lv > g.level);
   const lastBackup = S.meta.lastBackupAt ? Math.floor((Date.now() - S.meta.lastBackupAt) / 86400000) : null;
 
+  const sortedAch = [...ACHIEVEMENTS].sort((a, b) => (g.unlocked[b.id] ? 1 : 0) - (g.unlocked[a.id] ? 1 : 0) || (g.unlocked[b.id] || '').localeCompare(g.unlocked[a.id] || ''));
+  const achList = showAllAch ? sortedAch : sortedAch.slice(0, 9);
+  const sq = (ic, color) => `<span class="ic-sq" style="--sq:${color}">${icon(ic, 17)}</span>`;
+  const row = ({ ic, color, label, value = '', act = '', href = '', danger = false, sub = '', file = '' }) => {
+    const inner = `${sq(ic, color)}<span class="g-label">${label}${sub ? `<small>${sub}</small>` : ''}</span><span class="g-value">${value}</span>${file ? '' : `<span class="g-chev">${icon('right', 15)}</span>`}`;
+    if (file) return `<label class="g-row ${danger ? 'danger' : ''}">${inner}<span class="g-chev">${icon('right', 15)}</span>${file}</label>`;
+    if (href) return `<a class="g-row" href="${href}">${inner}</a>`;
+    return `<button type="button" class="g-row ${danger ? 'danger' : ''}" data-act="${act}">${inner}</button>`;
+  };
+  const backupSub = lastBackup === null ? 'まだバックアップしていません' : lastBackup === 0 ? '最後のバックアップ：今日' : `最後のバックアップ：${lastBackup}日前`;
+
   root.innerHTML = `
   <div class="page profile">
-    <header class="page-head"><h1>PROFILE</h1></header>
+    ${largeTitle({ kicker: 'PROFILE', title: 'プロフィール' })}
 
-    <section class="card hero-card">
-      <div class="hero-mark">${logoMark(64, g.stage.index)}</div>
-      <div class="hero-info">
-        <p class="hero-lv">Lv ${g.level} ・ ${esc(g.title)}</p>
-        <p class="hero-goal">目標：<strong>${esc(goal.name)}</strong></p>
-        <p class="muted small">EVOLVE ${days}日目 ・ 記録した日 ${g.activeDays}日</p>
+    <section class="card profile-hero">
+      <div class="ph-avatar">
+        ${ring(g.into / g.next, { size: 104, stroke: 5, track: 'var(--fill)', grad: ['#3BB39E', '#1F8070', '#C99B47'] })}
+        <span class="ph-mark">${logoMark(54, g.stage.index)}</span>
+        <span class="ph-lv num">Lv${g.level}</span>
+      </div>
+      <h2 class="ph-title">${esc(g.title)}</h2>
+      <p class="ph-goal">${icon('target', 14)}目標：${esc(goal.name)}${p.goalNote ? `<span>「${esc(p.goalNote)}」</span>` : ''}</p>
+      <div class="ph-stats">
+        <div><b class="num">${days}</b><span>EVOLVE日数</span></div>
+        <div><b class="num">${g.activeDays}</b><span>記録した日</span></div>
+        <div><b class="num">${unlockedCount}<small>/${ACHIEVEMENTS.length}</small></b><span>実績</span></div>
       </div>
     </section>
-    ${p.goalNote ? `<p class="goal-note">${icon('target', 16)}<span>${esc(p.goalNote)}</span></p>` : ''}
 
-    <section class="card">
-      <h2 class="card-h">${icon('crown', 18)}称号</h2>
-      <div class="titles">${TITLES.map(([lv, name]) => `<span class="title-chip ${g.level >= lv ? 'on' : ''} ${g.title === name ? 'cur' : ''}">${name}<small>Lv${lv}</small></span>`).join('')}</div>
-      ${nextTitle ? `<p class="muted small">次の称号「${nextTitle[1]}」は Lv${nextTitle[0]} で獲得できます。</p>` : '<p class="muted small">すべての称号を獲得しました。</p>'}
+    ${secH('称号', nextTitle ? `<span class="sec-note">次は Lv${nextTitle[0]}「${nextTitle[1]}」</span>` : '')}
+    <section class="card title-card">
+      <div class="title-track">${TITLES.map(([lv, name], i) => `
+        <div class="tt ${g.level >= lv ? 'on' : ''} ${g.title === name ? 'cur' : ''}">
+          <span class="tt-dot">${g.level >= lv ? icon(g.title === name ? 'crown' : 'check', 13) : ''}</span>
+          <strong>${name}</strong><small>Lv${lv}</small>
+        </div>`).join('')}</div>
     </section>
 
+    ${secH('実績', `<span class="sec-note">${unlockedCount} / ${ACHIEVEMENTS.length}</span>`)}
     <section class="card">
-      <h2 class="card-h">${icon('star', 18)}実績<span class="card-h-note">${unlockedCount} / ${ACHIEVEMENTS.length}</span></h2>
+      <div class="ach-progress"><i style="width:${(unlockedCount / ACHIEVEMENTS.length * 100).toFixed(1)}%"></i></div>
       <div class="ach-grid">
-        ${ACHIEVEMENTS.map((a) => {
+        ${achList.map((a) => {
           const d = g.unlocked[a.id];
           return `<div class="ach ${d ? 'on' : ''}">
             <span class="ach-ic">${icon(a.icon, 20)}</span>
             <strong>${esc(a.name)}</strong>
-            <small>${d ? `${fmtDateLong(d).replace(/（.）/, '')} 達成` : esc(a.desc)}</small>
+            <small>${d ? `${fmtDateLong(d).replace(/（.）/, '')}` : esc(a.desc)}</small>
             ${a.xp ? `<em>+${a.xp}XP</em>` : ''}
           </div>`;
         }).join('')}
       </div>
-      <p class="fine">連続記録が途切れても、達成した実績や経験値が減ることはありません。</p>
+      <button type="button" class="text-btn" data-act="ach-all">${showAllAch ? '閉じる' : `すべての実績を見る（${ACHIEVEMENTS.length}）`}${icon(showAllAch ? 'down' : 'right', 14)}</button>
+      <p class="fine center">連続記録が途切れても、実績や経験値が減ることはありません。</p>
     </section>
 
-    <section class="card settings">
-      <h2 class="card-h">${icon('user', 18)}プロフィール</h2>
-      <div class="set-list">
-        <div class="set-row"><span>年齢</span><b>${p.age ?? '—'}歳</b></div>
-        <div class="set-row"><span>身長</span><b>${p.height ?? '—'}cm</b></div>
-        <div class="set-row"><span>体重（最新）</span><b>${Number(store.bodyWeightAt()).toFixed(1)}kg</b></div>
-        <div class="set-row"><span>タンパク質目標</span><b>${p.proteinGoal || 100}g / 日</b></div>
-        <div class="set-row"><span>目指す身体</span><b>${esc(goal.name)}</b></div>
-      </div>
-      <button type="button" class="btn btn-soft btn-block" data-act="profile">${icon('edit', 16)}プロフィールを編集</button>
-    </section>
+    ${secH('あなたの情報')}
+    <div class="group">
+      ${row({ ic: 'user', color: '#1F8070', label: '年齢・身長', value: `${p.age ?? '—'}歳・${p.height ?? '—'}cm`, act: 'profile' })}
+      ${row({ ic: 'scale', color: '#6E9A63', label: '体重（最新）', value: `${Number(store.bodyWeightAt()).toFixed(1)}kg`, href: '#growth?add=body' })}
+      ${row({ ic: 'leaf', color: '#B8914A', label: 'タンパク質の目標', value: `${p.proteinGoal || 100}g / 日`, act: 'profile' })}
+      ${row({ ic: 'target', color: '#3B7FA8', label: '目指す身体', value: esc(goal.name), act: 'profile' })}
+    </div>
 
-    <section class="card settings">
-      <h2 class="card-h">${icon('settings', 18)}設定</h2>
-      <div class="set-list">
-        <button type="button" class="set-row link-row" data-act="shake"><span>${icon('cup', 18)}プロテイン1杯の量</span><b>${S.settings.proteinPerShake}g ${icon('right', 16)}</b></button>
-        <button type="button" class="set-row link-row" data-act="kcal"><span>${icon('flame', 18)}消費カロリーの計算</span><b>${icon('right', 16)}</b></button>
-        <a class="set-row link-row" href="#training?mode=strength&manage=1"><span>${icon('dumbbell', 18)}種目の追加・編集</span><b>${icon('right', 16)}</b></a>
-        <button type="button" class="set-row link-row" data-act="xp"><span>${icon('bolt', 18)}経験値のしくみ</span><b>${icon('right', 16)}</b></button>
-        <button type="button" class="set-row link-row" data-act="install"><span>${icon('share', 18)}ホーム画面に追加する方法</span><b>${icon('right', 16)}</b></button>
-      </div>
-    </section>
+    ${secH('設定')}
+    <div class="group">
+      ${row({ ic: 'cup', color: '#C99B47', label: 'プロテイン1杯の量', value: `${S.settings.proteinPerShake}g`, act: 'shake' })}
+      ${row({ ic: 'flame', color: '#D9774B', label: '消費カロリーの計算', act: 'kcal' })}
+      ${row({ ic: 'dumbbell', color: '#1F8070', label: '種目の追加・編集', href: '#training?mode=strength&manage=1' })}
+      ${row({ ic: 'bolt', color: '#7A68C9', label: '経験値のしくみ', act: 'xp' })}
+      ${row({ ic: 'share', color: '#3B7FA8', label: 'ホーム画面に追加する方法', act: 'install' })}
+    </div>
 
-    <section class="card settings">
-      <h2 class="card-h">${icon('download', 18)}データの保存・引っ越し</h2>
-      <p class="muted small">記録はこの端末の中に保存されています。機種変更やもしもの時のために、ときどきバックアップしておくと安心です。</p>
-      ${lastBackup === null ? '<p class="soft-alert">まだバックアップしたことがありません</p>' : lastBackup >= 30 ? `<p class="soft-alert">最後のバックアップから${lastBackup}日たちました</p>` : `<p class="muted small">最後のバックアップ：${lastBackup === 0 ? '今日' : lastBackup + '日前'}</p>`}
-      <div class="btn-row">
-        <button type="button" class="btn btn-primary" data-act="export">${icon('download', 16)}バックアップ</button>
-        <label class="btn btn-soft file-btn">${icon('upload', 16)}復元する<input type="file" name="restore" accept="application/json,.json"></label>
-      </div>
-      <p class="muted small" data-storage>保存容量を確認中…</p>
-    </section>
+    ${secH('データの保存・引っ越し')}
+    ${lastBackup === null || lastBackup >= 30 ? `<div class="soft-alert">${icon('info', 16)}<span>${lastBackup === null ? 'まだバックアップしたことがありません。もしもの時のために保存しておくと安心です。' : `最後のバックアップから${lastBackup}日たちました。`}</span></div>` : ''}
+    <div class="group">
+      ${row({ ic: 'download', color: '#1F8070', label: 'バックアップを保存', sub: backupSub, act: 'export' })}
+      ${row({ ic: 'upload', color: '#5B6462', label: 'バックアップから復元', file: '<input type="file" name="restore" accept="application/json,.json">' })}
+    </div>
+    <p class="group-foot" data-storage>保存容量を確認中…</p>
 
-    <section class="card settings">
-      <h2 class="card-h">${icon('info', 18)}その他</h2>
-      <div class="set-list">
-        ${isDemo()
-          ? '<button type="button" class="set-row link-row" data-act="demo-off"><span>デモを終了する</span><b>' + icon('right', 16) + '</b></button>'
-          : '<button type="button" class="set-row link-row" data-act="demo-on"><span>デモデータで試してみる</span><b>' + icon('right', 16) + '</b></button>'}
-        <button type="button" class="set-row link-row danger" data-act="wipe"><span>${icon('trash', 18)}すべてのデータを削除</span><b>${icon('right', 16)}</b></button>
-      </div>
-      <p class="fine">EVOLVE v${APP_VERSION}<br>消費カロリー・ステータスなどの数値はすべて目安・ゲーム内の指標であり、医学的な測定値ではありません。体調に不安がある場合は無理をせず、専門家にご相談ください。</p>
-    </section>
+    <div class="group">
+      ${isDemo()
+        ? row({ ic: 'spark', color: '#C99B47', label: 'デモを終了する', act: 'demo-off' })
+        : row({ ic: 'spark', color: '#C99B47', label: 'デモデータで試してみる', act: 'demo-on' })}
+      ${row({ ic: 'trash', color: '#C0564B', label: 'すべてのデータを削除', act: 'wipe', danger: true })}
+    </div>
+
+    <div class="about">
+      ${logoMark(28, 5)}
+      <p class="about-name">EVOLVE <span>v${APP_VERSION}</span></p>
+      <p class="fine center">消費カロリー・ステータスなどの数値はすべて目安・ゲーム内の指標であり、医学的な測定値ではありません。体調に不安がある場合は無理をせず、専門家にご相談ください。</p>
+    </div>
   </div>`;
 
   showStorage(root);
+  // 称号の並びを現在の称号の位置までスクロール
+  const track = root.querySelector('.title-track');
+  const cur = track && track.querySelector('.tt.cur');
+  if (cur) track.scrollLeft = cur.offsetLeft - track.clientWidth / 2 + cur.clientWidth / 2;
 
   root.onclick = async (e) => {
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const act = b.dataset.act;
+    if (act === 'ach-all') { showAllAch = !showAllAch; app.refresh(); return; }
     if (act === 'profile') editProfile(app);
     else if (act === 'shake') editShake(app);
     else if (act === 'kcal') editKcal(app);

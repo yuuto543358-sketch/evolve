@@ -3,10 +3,11 @@ import * as store from '../store.js';
 import { S, exerciseById } from '../store.js';
 import { strengthKcal, cardioKcal, cardioKind, CARDIO_KINDS } from '../calc.js';
 import { icon } from '../icons.js';
-import { segmented, stepper, chips, dateField, num, val, openSheet, toast, choice, confirmDialog } from '../ui.js';
+import { segmented, stepper, chips, dateField, num, val, openSheet, toast, choice, confirmDialog, largeTitle, secH } from '../ui.js';
 import { workoutRow, cardioRow, handleEditClick, unitLabel, workoutText, cardioFormHTML, updateCardioEstimate } from '../records.js';
 import { notify } from '../app.js';
-import { today, esc, fmtNum, byDateDesc, addDays, fmtDateLong, relDay, groupBy } from '../util.js';
+import { today, esc, fmtNum, byDateDesc, addDays, fmtDateLong, fmtDate, relDay, groupBy } from '../util.js';
+import { emptyState } from '../records.js';
 
 let mode = 'strength';
 let date = today();
@@ -55,10 +56,7 @@ export function render(root, app) {
 
   root.innerHTML = `
   <div class="page training">
-    <header class="page-head">
-      <h1>TRAINING</h1>
-      ${mode !== 'history' ? dateField('date', date) : ''}
-    </header>
+    ${largeTitle({ kicker: 'TRAINING', title: 'トレーニング', right: mode !== 'history' ? dateField('date', date) : '' })}
     ${segmented('mode', [{ value: 'strength', label: '筋トレ' }, { value: 'cardio', label: '有酸素' }, { value: 'history', label: '履歴' }], mode)}
     <div class="mode-body scope">${mode === 'strength' ? strengthHTML() : mode === 'cardio' ? cardioHTML() : historyHTML()}</div>
   </div>
@@ -67,7 +65,7 @@ export function render(root, app) {
   if (mode === 'cardio') updateCardioEstimate(root.querySelector('.mode-body'));
 
   root.onchange = (e) => {
-    if (e.target.matches('input[name=date]') && e.target.closest('.page-head')) {
+    if (e.target.matches('input[name=date]') && e.target.closest('.large-title')) {
       date = e.target.value || today();
       app.refresh();
     } else if (mode === 'cardio') {
@@ -127,30 +125,27 @@ function strengthHTML() {
   const exRow = (ex) => {
     const last = lastOf(ex.id);
     const inCart = cart.some((c) => c.exerciseId === ex.id);
+    const partIc = { upper: 'dumbbell', lower: 'walk', core: 'target' }[ex.part] || 'dumbbell';
     return `<button type="button" class="ex-row ${inCart ? 'in' : ''}" data-add-ex="${ex.id}">
-      <span class="ex-name">${esc(ex.name)}</span>
-      <span class="ex-last">${last ? `前回 ${workoutText(last)}` : 'はじめての種目'}</span>
+      <span class="ex-ic">${icon(partIc, 18)}</span>
+      <span class="ex-text"><span class="ex-name">${esc(ex.name)}</span>
+      <span class="ex-last">${last ? `前回 ${workoutText(last)}` : 'はじめての種目'}</span></span>
       <span class="ex-add">${icon(inCart ? 'check' : 'plus', 18)}</span>
     </button>`;
   };
   return `
-    ${cart.length ? `<section class="card cart">
-      <div class="card-h-row"><h2 class="card-h">${icon('bolt', 18)}今回の記録</h2><button type="button" class="link" data-clear-cart>クリア</button></div>
-      <p class="hint top">前回の内容が入っています。変えたいところだけタップ。</p>
-      ${cart.map(cartItemHTML).join('')}
-    </section>` : ''}
-    ${!cart.length && lastDay ? `<button type="button" class="card repeat-card" data-repeat="${lastDay}">
-      ${icon('route', 18)}<span><strong>前回（${relDay(lastDay)}）と同じメニュー</strong><small>${S.workouts.filter((w) => w.date === lastDay).map((w) => esc(w.exerciseName)).join('・')}</small></span>${icon('right', 18)}
+    ${cart.length ? `
+    ${secH(`今回のメニュー<span class="count-badge">${cart.length}</span>`, '<button type="button" class="sec-link" data-clear-cart>クリア</button>')}
+    <p class="sec-hint">前回の内容が入っています。変えたいところだけタップ。</p>
+    <div class="cart">${cart.map(cartItemHTML).join('')}</div>` : ''}
+    ${!cart.length && lastDay ? `<button type="button" class="repeat-card" data-repeat="${lastDay}">
+      <span class="repeat-ic">${icon('route', 20)}</span><span class="repeat-text"><strong>前回と同じメニュー</strong><small>${relDay(lastDay)}・${S.workouts.filter((w) => w.date === lastDay).map((w) => esc(w.exerciseName)).join('・')}</small></span>${icon('right', 18)}
     </button>` : ''}
-    <section class="card">
-      <div class="card-h-row"><h2 class="card-h">${icon('dumbbell', 18)}種目を選ぶ</h2><button type="button" class="link" data-manage>${icon('settings', 15)}種目を管理</button></div>
-      ${frequent.length ? `<p class="list-label">よく使う種目</p><div class="ex-list">${frequent.map(exRow).join('')}</div><p class="list-label">その他の種目</p>` : ''}
-      <div class="ex-list">${rest.map(exRow).join('')}</div>
-    </section>
-    <section class="card">
-      <h2 class="card-h">${icon('check', 18)}${date === today() ? '今日' : fmtDateLong(date)}の筋トレ</h2>
-      ${todays.length ? `<div class="rec-list">${todays.map(workoutRow).join('')}</div><p class="hint">タップで修正・削除できます</p>` : '<div class="empty-soft">まだ記録はありません。上の種目をタップして始めましょう。</div>'}
-    </section>`;
+    ${secH('種目を選ぶ', `<button type="button" class="sec-link" data-manage>${icon('settings', 14)}管理</button>`)}
+    ${frequent.length ? `<p class="group-label">よく使う種目</p><div class="card list-card ex-list">${frequent.map(exRow).join('')}</div><p class="group-label">その他の種目</p>` : ''}
+    <div class="card list-card ex-list">${rest.map(exRow).join('')}</div>
+    ${secH(`${date === today() ? '今日' : fmtDateLong(date)}の筋トレ`)}
+    ${todays.length ? `<div class="card list-card"><div class="rec-list">${todays.map(workoutRow).join('')}</div></div><p class="sec-hint">タップで修正、左にスワイプで削除できます</p>` : emptyState('dumbbell', 'まだ記録はありません', '上の種目をタップして、最初の1セットを記録しましょう。')}`;
 }
 
 function cartItemHTML(c) {
@@ -319,17 +314,15 @@ function cardioHTML() {
   const todays = S.cardio.filter((c) => c.date === date).sort(byDateDesc);
   const last = lastCardio(cardioDraft.kind);
   return `
+    ${secH('有酸素運動を記録')}
+    ${last ? `<p class="sec-hint">前回の${cardioKind(cardioDraft.kind).name}（${relDay(last.date)}）の内容が入っています。</p>` : ''}
     <section class="card">
-      <h2 class="card-h">${icon('run', 18)}有酸素運動を記録</h2>
-      ${last ? `<p class="hint top">前回の${cardioKind(cardioDraft.kind).name}（${relDay(last.date)}）の内容が入っています。</p>` : ''}
       <div class="form">${cardioFormHTML(cardioDraft, { showDate: false })}</div>
       <button type="button" class="btn btn-primary btn-block btn-lg" data-save-cardio>${icon('check', 20)}記録する</button>
       <p class="fine">消費カロリーは体重・時間・速度から推定した目安です（METs法）。</p>
     </section>
-    <section class="card">
-      <h2 class="card-h">${icon('check', 18)}${date === today() ? '今日' : fmtDateLong(date)}の有酸素運動</h2>
-      ${todays.length ? `<div class="rec-list">${todays.map(cardioRow).join('')}</div>` : '<div class="empty-soft">まだ記録はありません。歩いた時間だけでも立派な記録です。</div>'}
-    </section>`;
+    ${secH(`${date === today() ? '今日' : fmtDateLong(date)}の有酸素運動`)}
+    ${todays.length ? `<div class="card list-card"><div class="rec-list">${todays.map(cardioRow).join('')}</div></div>` : emptyState('run', 'まだ記録はありません', '歩いた時間だけでも立派な記録です。')}`;
 }
 
 function saveCardioDraft(root) {
@@ -374,19 +367,17 @@ function historyHTML() {
     ...S.workouts.map((r) => ({ ...r, _t: 'w' })),
     ...S.cardio.map((r) => ({ ...r, _t: 'c' })),
   ].sort(byDateDesc);
-  if (!all.length) return '<section class="card"><div class="empty-soft">運動の記録はまだありません。<br>筋トレか有酸素のタブから、最初の1回を記録しましょう。</div></section>';
+  if (!all.length) return emptyState('clock', '運動の記録はまだありません', '筋トレか有酸素のタブから、最初の1回を記録しましょう。');
   const byDate = groupBy(all, (r) => r.date);
   const dates = [...byDate.keys()].slice(0, historyLimit);
   return `
     ${dates.map((d) => {
       const items = byDate.get(d);
-      return `<section class="card hist-day">
-        <h3 class="hist-h">${fmtDateLong(d)}<span>${relDay(d) !== d ? relDay(d) : ''}</span></h3>
-        <div class="rec-list">${items.map((r) => (r._t === 'w' ? workoutRow(r) : cardioRow(r))).join('')}</div>
-      </section>`;
+      return `${secH(fmtDateLong(d), `<span class="sec-note">${relDay(d) !== fmtDate(d) ? relDay(d) : ''}</span>`)}
+      <div class="card list-card"><div class="rec-list">${items.map((r) => (r._t === 'w' ? workoutRow(r) : cardioRow(r))).join('')}</div></div>`;
     }).join('')}
     ${byDate.size > historyLimit ? '<button type="button" class="btn btn-ghost btn-block" data-more>もっと見る</button>' : ''}
-    <p class="hint center">記録をタップすると修正・削除できます</p>`;
+    <p class="sec-hint center">タップで修正、左にスワイプで削除できます</p>`;
 }
 
 export { CARDIO_KINDS };

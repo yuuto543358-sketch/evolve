@@ -2,9 +2,9 @@
 import * as store from '../store.js';
 import { S } from '../store.js';
 import { icon } from '../icons.js';
-import { lineChart } from '../charts.js';
-import { segmented, openSheet, toast, confirmDialog, choice } from '../ui.js';
-import { bodyEditor, bodyRow, handleEditClick, removeWithUndo } from '../records.js';
+import { lineChart, bindCharts, sparkline } from '../charts.js';
+import { segmented, openSheet, toast, confirmDialog, choice, largeTitle, secH } from '../ui.js';
+import { bodyEditor, bodyRow, handleEditClick, removeWithUndo, emptyState } from '../records.js';
 import { notify } from '../app.js';
 import { today, esc, fmtNum, byDateDesc, addDays, weekStart, monthKey, fmtDate, fmtDateLong, relDay, groupBy, uid } from '../util.js';
 
@@ -34,12 +34,18 @@ export function render(root, app) {
 
   root.innerHTML = `
   <div class="page growth">
-    <header class="page-head"><h1>GROWTH</h1></header>
+    ${largeTitle({
+      kicker: 'GROWTH', title: 'からだの変化',
+      right: tab === 'body'
+        ? `<button type="button" class="round-btn" data-add-body aria-label="身体測定を記録">${icon('plus', 20)}</button>`
+        : `<label class="round-btn file-btn" aria-label="写真を追加">${icon('camera', 19)}<input type="file" name="photo" accept="image/*" multiple></label>`,
+    })}
     ${segmented('tab', [{ value: 'body', label: 'からだ' }, { value: 'photo', label: '写真' }], tab)}
     <div class="scope">${tab === 'body' ? bodyHTML() : photoHTML()}</div>
   </div>`;
 
   if (tab === 'photo') hydratePhotos(root);
+  bindCharts(root);
   if (openBody) setTimeout(() => bodyEditor({}), 50);
 
   root.onclick = async (e) => {
@@ -119,31 +125,27 @@ function bodyHTML() {
   const pts = aggregate(series(metric), period);
   const cards = METRICS.map((m) => {
     const s = series(m.id);
-    if (!s.length) return `<button type="button" class="metric ${m.id === metric ? 'on' : ''}" data-metric="${m.id}"><span>${m.name}</span><b class="muted">—</b><small>未記録</small></button>`;
+    if (!s.length) return `<button type="button" class="metric empty-m ${m.id === metric ? 'on' : ''}" data-metric="${m.id}" style="--c:${m.color}"><span class="m-name"><i></i>${m.name}</span><b class="muted">—</b><small>未記録</small></button>`;
     const last = s[s.length - 1]; const first = s[0];
     const diff = last.y - first.y;
     return `<button type="button" class="metric ${m.id === metric ? 'on' : ''}" data-metric="${m.id}" style="--c:${m.color}">
-      <span>${m.name}</span><b>${last.y.toFixed(m.dec)}<small>${m.unit}</small></b>
+      <span class="m-name"><i></i>${m.name}</span><b class="num">${last.y.toFixed(m.dec)}<small>${m.unit}</small></b>
       <small>${s.length > 1 ? `はじめから ${diff > 0 ? '+' : diff < 0 ? '−' : '±'}${Math.abs(diff).toFixed(m.dec)}${m.unit}` : relDay(last.x)}</small>
+      ${s.length > 1 ? `<span class="m-spark">${sparkline(s.slice(-12).map((x) => x.y), m.color)}</span>` : ''}
     </button>`;
   }).join('');
   return `
-    <button type="button" class="btn btn-primary btn-block btn-lg" data-add-body>${icon('scale', 20)}身体測定を記録</button>
     <div class="metrics">${cards}</div>
-    <section class="card">
-      <div class="card-h-row">
-        <h2 class="card-h" style="--c:${md.color}">${md.name}の推移</h2>
-        <div class="mini-seg">${[['day', '日'], ['week', '週'], ['month', '月']].map(([v, l]) => `<button type="button" class="${period === v ? 'on' : ''}" data-period="${v}">${l}</button>`).join('')}</div>
-      </div>
+    <button type="button" class="btn btn-primary btn-block btn-lg" data-add-body>${icon('scale', 20)}身体測定を記録</button>
+    ${secH(`${md.name}の推移`, `<div class="mini-seg">${[['day', '日'], ['week', '週'], ['month', '月']].map(([v, l]) => `<button type="button" class="${period === v ? 'on' : ''}" data-period="${v}">${l}</button>`).join('')}</div>`)}
+    <section class="card chart-card">
       ${lineChart(pts, { unit: md.unit, color: md.color, decimals: md.dec, empty: `${md.name}を2回以上記録すると、ここにグラフが表示されます` })}
-      <p class="fine">${period === 'day' ? '直近60日の記録' : period === 'week' ? '週ごとの平均（最大26週）' : '月ごとの平均（最大24か月）'}</p>
+      <p class="fine">${period === 'day' ? '直近60日の記録' : period === 'week' ? '週ごとの平均（最大26週）' : '月ごとの平均（最大24か月）'}${pts.length ? '・グラフを指でなぞると値が見られます' : ''}</p>
     </section>
     <div class="note-card">${icon('info', 18)}<p>体重は水分や食事で日々上下します。増えても失敗ではありません。体重だけで判断せず、写真やウエスト、からだの感覚もあわせて成長を見ていきましょう。</p></div>
-    <section class="card">
-      <h2 class="card-h">${icon('calendar', 18)}測定の記録</h2>
-      ${sorted.length ? `<div class="rec-list">${sorted.slice(0, bodyLimit).map((b) => bodyRow({ ...b, note: `${fmtDateLong(b.date)}${b.note ? ' ・ ' + b.note : ''}` })).join('')}</div>
-      ${sorted.length > bodyLimit ? '<button type="button" class="btn btn-ghost btn-block" data-more-body>もっと見る</button>' : ''}` : '<div class="empty-soft">まだ記録がありません。</div>'}
-    </section>`;
+    ${secH('測定の記録', `<span class="sec-note">${sorted.length}件</span>`)}
+    ${sorted.length ? `<div class="card list-card"><div class="rec-list">${sorted.slice(0, bodyLimit).map((b) => bodyRow({ ...b, note: `${fmtDateLong(b.date)}${b.note ? ' ・ ' + b.note : ''}` })).join('')}</div></div>
+      ${sorted.length > bodyLimit ? '<button type="button" class="btn btn-ghost btn-block" data-more-body>もっと見る</button>' : ''}` : emptyState('scale', 'まだ記録がありません', '体重を記録すると、ここに一覧が表示されます。')}`;
 }
 
 /* ---------- 写真 ---------- */
@@ -161,8 +163,8 @@ function photoHTML() {
   const B = list.find((x) => x.id === pick.b);
   const all = [...S.photos].sort(byDateDesc);
   return `
+    ${secH('写真を記録')}
     <section class="card">
-      <h2 class="card-h">${icon('camera', 18)}写真を記録</h2>
       <p class="hint top">同じ場所・同じ明るさ・同じポーズで撮ると、変化が分かりやすくなります。</p>
       <div class="field"><span class="field-label">ポーズ</span>${choice('addPose', POSES, pose)}</div>
       <label class="btn btn-primary btn-block btn-lg file-btn">${icon('camera', 20)}撮影する・写真を選ぶ
@@ -171,10 +173,9 @@ function photoHTML() {
       <p class="fine">写真はこの端末の中だけに保存されます（自動で軽く圧縮します）。</p>
     </section>
 
+    ${secH('ビフォー・アフター', `<div class="mini-seg">${POSES.map((p) => `<button type="button" class="${pose === p.value ? 'on' : ''}" data-pose="${p.value}">${p.label}</button>`).join('')}</div>`)}
     <section class="card">
-      <div class="card-h-row"><h2 class="card-h">${icon('compare', 18)}ビフォー・アフター</h2>
-        <div class="mini-seg">${POSES.map((p) => `<button type="button" class="${pose === p.value ? 'on' : ''}" data-pose="${p.value}">${p.label}</button>`).join('')}</div></div>
-      ${list.length < 2 ? `<div class="empty-soft">${poseName(pose)}の写真が2枚以上になると、過去と今を並べて比べられます。${list.length ? '<br>あと1枚です。' : ''}</div>` : `
+      ${list.length < 2 ? emptyState('compare', `${poseName(pose)}の写真を2枚以上で比較できます`, `過去と今を並べて、見た目の変化を確かめられます。${list.length ? 'あと1枚です。' : ''}`) : `
         <div class="mini-seg wide">${[['side', '並べて比較'], ['slider', 'スライダー']].map(([v, l]) => `<button type="button" class="${cmpMode === v ? 'on' : ''}" data-cmp="${v}">${l}</button>`).join('')}</div>
         ${cmpMode === 'side' ? `
           <div class="cmp-side">
@@ -196,10 +197,8 @@ function photoHTML() {
       `}
     </section>
 
-    <section class="card">
-      <h2 class="card-h">${icon('image', 18)}すべての写真<span class="card-h-note">${all.length}枚</span></h2>
-      ${all.length ? `<div class="gallery">${all.map((x) => `<button type="button" class="g-item" data-photo="${x.id}"><img src="${x.thumb}" alt="" loading="lazy"><span>${fmtDate(x.date, { weekday: false })} ${poseName(x.pose)}</span></button>`).join('')}</div>` : '<div class="empty-soft">まだ写真がありません。<br>今の身体が、未来の自分にとっての「ビフォー」になります。</div>'}
-    </section>`;
+    ${secH('すべての写真', `<span class="sec-note">${all.length}枚</span>`)}
+    ${all.length ? `<div class="gallery">${all.map((x) => `<button type="button" class="g-item" data-photo="${x.id}"><img src="${x.thumb}" alt="" loading="lazy"><span>${fmtDate(x.date, { weekday: false })} ${poseName(x.pose)}</span></button>`).join('')}</div>` : emptyState('image', 'まだ写真がありません', '今の身体が、未来の自分にとっての「ビフォー」になります。')}`;
 }
 
 function diffText(a, b) {

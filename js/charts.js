@@ -2,17 +2,18 @@
 import { fmtNum, parseYmd } from './util.js';
 
 /** 円形の進捗リング */
-export function ring(progress, { size = 120, stroke = 10, color = 'var(--primary)', track = 'var(--line)', gold = false } = {}) {
+export function ring(progress, { size = 120, stroke = 10, color = 'var(--primary)', track = 'var(--fill)', gold = false, grad = null } = {}) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const p = Math.max(0, Math.min(1, progress || 0));
   const gid = 'rg' + Math.random().toString(36).slice(2, 7);
+  const stops = grad || (gold ? ['#2FA08D', '#22806F', '#C9A55C'] : null);
   return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
-    ${gold ? `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2FA08D"/><stop offset=".75" stop-color="#22806F"/><stop offset="1" stop-color="#C9A55C"/></linearGradient></defs>` : ''}
+    ${stops ? `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1">${stops.map((col, i) => `<stop offset="${i / (stops.length - 1)}" stop-color="${col}"/>`).join('')}</linearGradient></defs>` : ''}
     <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${track}" stroke-width="${stroke}"/>
-    <circle class="ring-val" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${gold ? `url(#${gid})` : color}" stroke-width="${stroke}"
+    ${p > 0 ? `<circle class="ring-val" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${stops ? `url(#${gid})` : color}" stroke-width="${stroke}"
       stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p)}" transform="rotate(-90 ${size / 2} ${size / 2})"
-      style="--c:${c};--o:${c * (1 - p)}"/>
+      style="--c:${c};--o:${c * (1 - p)}"/>` : ''}
   </svg>`;
 }
 
@@ -82,26 +83,81 @@ export function lineChart(pts, { unit = '', color = '#22806F', height = 190, dec
   const dots = pts.map((p, i) => `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${n > 40 ? 0 : 3}" fill="#fff" stroke="${color}" stroke-width="2"/>`).join('');
   const last = pts[n - 1];
   const lx = X(xs[n - 1]); const ly = Y(last.y);
-  return `<svg class="line-chart" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="推移グラフ">
+  const scrubPts = pts.map((p, i) => [Math.round(X(xs[i]) * 10) / 10, Math.round(Y(p.y) * 10) / 10, p.label || `${parseYmd(p.x).getMonth() + 1}/${parseYmd(p.x).getDate()}`, `${fmtNum(p.y, decimals)}${unit}`]);
+  return `<svg class="line-chart" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="推移グラフ" data-pts='${JSON.stringify(scrubPts)}' data-h="${H}" data-pt="${padT}" data-pb="${padB}" data-color="${color}">
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
     ${grid}${xl}
     <path d="${area}" fill="url(#${gid})"/>
     <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
     ${dots}
     <circle cx="${lx}" cy="${ly}" r="5" fill="${color}" stroke="#fff" stroke-width="2"/>
-    <g transform="translate(${Math.min(lx, W - 44)},${Math.max(ly - 12, 10)})"><text text-anchor="middle" font-size="10.5" font-weight="700" fill="${color}">${fmtNum(last.y, decimals)}${unit}</text></g>
+    <g class="last-label" transform="translate(${Math.min(lx, W - 44)},${Math.max(ly - 12, 10)})"><text text-anchor="middle" font-size="10.5" font-weight="700" fill="${color}">${fmtNum(last.y, decimals)}${unit}</text></g>
+    <g class="scrub" style="opacity:0">
+      <line x1="0" x2="0" y1="${padT - 6}" y2="${H - padB}" stroke="${color}" stroke-width="1" stroke-dasharray="2 3"/>
+      <circle r="5.5" fill="${color}" stroke="#fff" stroke-width="2.5"/>
+      <g class="tip"><rect x="-38" y="-30" width="76" height="24" rx="8" fill="#1F2524"/><text x="0" y="-14" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff"></text></g>
+    </g>
+    <rect class="hit" x="0" y="0" width="${W}" height="${H}" fill="transparent"/>
   </svg>`;
 }
 
 /** 小さな棒グラフ（直近の日々のXPなど） */
-export function miniBars(values, { height = 44, color = 'var(--primary)', labels = [] } = {}) {
+export function miniBars(values, { height = 44, color = 'var(--primary)', empty = 'var(--fill)', labels = [], highlight = -1, hiColor = 'var(--gold)', labelColor = 'var(--ink-3)', goal = null } = {}) {
   const W = 300; const H = height; const n = values.length;
-  const max = Math.max(1, ...values);
+  const max = Math.max(1, goal || 0, ...values);
   const bw = W / n;
   const bars = values.map((v, i) => {
-    const h = v ? Math.max(3, (v / max) * (H - 14)) : 2;
-    return `<rect x="${i * bw + bw * 0.2}" y="${H - 12 - h}" width="${bw * 0.6}" height="${h}" rx="2" fill="${v ? color : 'var(--line)'}"/>`;
+    const h = v ? Math.max(4, (v / max) * (H - 16)) : 4;
+    const fill = !v ? empty : i === highlight ? hiColor : color;
+    return `<rect class="bar" style="--d:${i * 40}ms" x="${i * bw + bw * 0.22}" y="${H - 14 - h}" width="${bw * 0.56}" height="${h}" rx="${Math.min(5, bw * 0.28)}" fill="${fill}"/>`;
   }).join('');
-  const lbl = labels.map((l, i) => `<text x="${i * bw + bw / 2}" y="${H - 1}" text-anchor="middle" font-size="9" fill="var(--ink-3)">${l}</text>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" aria-hidden="true">${bars}${lbl}</svg>`;
+  const goalLine = goal ? `<line x1="0" x2="${W}" y1="${H - 14 - (goal / max) * (H - 16)}" y2="${H - 14 - (goal / max) * (H - 16)}" stroke="${hiColor}" stroke-width="1" stroke-dasharray="3 4"/>` : '';
+  const lbl = labels.map((l, i) => `<text x="${i * bw + bw / 2}" y="${H - 1}" text-anchor="middle" font-size="9.5" font-weight="${i === highlight ? 700 : 500}" fill="${labelColor}">${l}</text>`).join('');
+  return `<svg class="mini-bars" viewBox="0 0 ${W} ${H}" width="100%" aria-hidden="true">${goalLine}${bars}${lbl}</svg>`;
+}
+
+/** グラフを指でなぞると、その日の値を表示する */
+export function bindCharts(root) {
+  root.querySelectorAll('svg.line-chart[data-pts]').forEach((svg) => {
+    const pts = JSON.parse(svg.dataset.pts);
+    const scrub = svg.querySelector('.scrub');
+    const last = svg.querySelector('.last-label');
+    const line = scrub.querySelector('line');
+    const dot = scrub.querySelector('circle');
+    const tip = scrub.querySelector('.tip');
+    const text = tip.querySelector('text');
+    const vb = svg.viewBox.baseVal;
+    let lastIdx = -1;
+    const show = (e) => {
+      const r = svg.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * vb.width;
+      let best = 0;
+      pts.forEach((p, i) => { if (Math.abs(p[0] - x) < Math.abs(pts[best][0] - x)) best = i; });
+      const [px, py, label, value] = pts[best];
+      line.setAttribute('x1', px); line.setAttribute('x2', px);
+      dot.setAttribute('cx', px); dot.setAttribute('cy', py);
+      const tx = Math.max(40, Math.min(vb.width - 40, px));
+      tip.setAttribute('transform', `translate(${tx},${Math.max(32, py - 4)})`);
+      text.textContent = `${label}  ${value}`;
+      scrub.style.opacity = 1;
+      if (last) last.style.opacity = 0;
+      if (best !== lastIdx) { lastIdx = best; try { if (navigator.vibrate) navigator.vibrate(3); } catch { /* ignore */ } }
+    };
+    const hide = () => { scrub.style.opacity = 0; if (last) last.style.opacity = 1; lastIdx = -1; };
+    svg.addEventListener('pointerdown', (e) => { show(e); });
+    svg.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' || e.buttons || e.pressure) show(e); });
+    svg.addEventListener('pointerup', () => setTimeout(hide, 1200));
+    svg.addEventListener('pointerleave', hide);
+  });
+}
+
+/** 小さな折れ線（カード内の傾向表示） */
+export function sparkline(vals, color = 'var(--primary)') {
+  if (vals.length < 2) return '';
+  const W = 64; const H = 22;
+  const min = Math.min(...vals); const max = Math.max(...vals);
+  const span = max - min || 1;
+  const pts = vals.map((v, i) => `${((i / (vals.length - 1)) * (W - 4) + 2).toFixed(1)},${(H - 3 - ((v - min) / span) * (H - 6)).toFixed(1)}`);
+  const last = pts[pts.length - 1].split(',');
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/><circle cx="${last[0]}" cy="${last[1]}" r="2.4" fill="${color}"/></svg>`;
 }
