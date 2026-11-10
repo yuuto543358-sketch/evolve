@@ -4,9 +4,11 @@ import { S } from '../store.js';
 import { icon } from '../icons.js';
 import { lineChart, bindCharts, sparkline } from '../charts.js';
 import { segmented, openSheet, toast, confirmDialog, choice, largeTitle, secH } from '../ui.js';
+import { POSES, poseName, photosOf, fullUrl, forgetUrl, savePhotoFile, photoForRange, openPhotoViewer, filmstripHTML, weightNear } from '../photos.js';
+import { openCamera } from '../camera.js';
 import { bodyEditor, bodyRow, handleEditClick, removeWithUndo, emptyState } from '../records.js';
 import { notify } from '../app.js';
-import { today, esc, fmtNum, byDateDesc, addDays, weekStart, monthKey, fmtDate, fmtDateLong, relDay, groupBy, uid } from '../util.js';
+import { today, esc, fmtNum, byDateDesc, addDays, weekStart, monthKey, fmtDate, fmtDateLong, relDay, groupBy, parseYmd, ymd } from '../util.js';
 
 let tab = 'body';
 let metric = 'weight';
@@ -15,7 +17,8 @@ let pose = 'front';
 let cmpMode = 'side';
 let pick = { a: null, b: null };
 let bodyLimit = 10;
-const urlCache = new Map();
+let chartRanges = [];   // グラフの各点がカバーする日付の範囲
+let chartSel = null;    // グラフで選んでいる点
 
 const METRICS = [
   { id: 'weight', name: '体重', unit: 'kg', color: '#22806F', dec: 1 },
@@ -23,8 +26,6 @@ const METRICS = [
   { id: 'muscle', name: '筋肉量', unit: 'kg', color: '#3B7FA8', dec: 1 },
   { id: 'waist', name: 'ウエスト', unit: 'cm', color: '#6E9A63', dec: 1 },
 ];
-const POSES = [{ value: 'front', label: '正面' }, { value: 'side', label: '側面' }, { value: 'back', label: '背面' }];
-const poseName = (p) => (POSES.find((x) => x.value === p) || POSES[0]).label;
 
 export function render(root, app) {
   const p = app.params();
@@ -38,7 +39,7 @@ export function render(root, app) {
       kicker: 'GROWTH', title: 'からだの変化',
       right: tab === 'body'
         ? `<button type="button" class="round-btn" data-add-body aria-label="身体測定を記録">${icon('plus', 20)}</button>`
-        : `<label class="round-btn file-btn" aria-label="写真を追加">${icon('camera', 19)}<input type="file" name="photo" accept="image/*" multiple></label>`,
+        : `<button type="button" class="round-btn" data-camera aria-label="写真を撮る">${icon('camera', 19)}</button>`,
     })}
     ${segmented('tab', [{ value: 'body', label: 'からだ' }, { value: 'photo', label: '写真' }], tab)}
     <div class="scope">${tab === 'body' ? bodyHTML() : photoHTML()}</div>
@@ -46,17 +47,38 @@ export function render(root, app) {
 
   if (tab === 'photo') hydratePhotos(root);
   bindCharts(root);
+  // グラフで選んだ日の写真を表示
+  const svg = root.querySelector('svg.line-chart');
+  if (svg && chartRanges.length) {
+    svg.addEventListener('chartselect', (e) => {
+      chartSel = e.detail.index;
+      const panel = root.querySelector('[data-chart-photo]');
+      if (panel) panel.innerHTML = chartPhotoHTML(chartSel);
+    });
+    const initial = chartSel !== null && chartSel < chartRanges.length ? chartSel : chartRanges.length - 1;
+    if (chartSel !== null) svg.selectIndex(initial);
+    const panel = root.querySelector('[data-chart-photo]');
+    if (panel) panel.innerHTML = chartPhotoHTML(initial);
+  }
   if (openBody) setTimeout(() => bodyEditor({}), 50);
 
   root.onclick = async (e) => {
     const seg = e.target.closest('[data-seg] [data-v]');
-    if (seg) { tab = seg.dataset.v; app.refresh(); return; }
+    if (seg) {
+      if (seg.closest('[data-seg]').dataset.seg === 'pose') { pose = seg.dataset.v; pick = { a: null, b: null }; }
+      else tab = seg.dataset.v;
+      app.refresh();
+      return;
+    }
     if (handleEditClick(e)) return;
     if (e.target.closest('[data-add-body]')) { bodyEditor({}); return; }
     const m = e.target.closest('[data-metric]');
-    if (m) { metric = m.dataset.metric; app.refresh(); return; }
+    if (m) { metric = m.dataset.metric; chartSel = null; app.refresh(); return; }
     const pr = e.target.closest('[data-period]');
-    if (pr) { period = pr.dataset.period; app.refresh(); return; }
+    if (pr) { period = pr.dataset.period; chartSel = null; app.refresh(); return; }
+    if (e.target.closest('[data-camera]')) { openCamera({ pose, onSaved: (rec) => { pose = rec.pose; pick = { a: null, b: null }; } }); return; }
+    const vw = e.target.closest('[data-viewer]');
+    if (vw) { openPhotoViewer({ pose: vw.dataset.pose || pose, startId: vw.dataset.viewer || null, onEdit: (id) => openPhoto(id, app) }); return; }
     if (e.target.closest('[data-more-body]')) { bodyLimit += 20; app.refresh(); return; }
     // 写真
     const ps = e.target.closest('[data-pose]');
@@ -74,15 +96,14 @@ export function render(root, app) {
     const sw = e.target.closest('[data-swap]');
     if (sw) { pick = { a: pick.b, b: pick.a }; app.refresh(); return; }
     const ph = e.target.closest('[data-photo]');
-    if (ph) { openPhoto(ph.dataset.photo, app); }
+    if (ph) { openPhotoViewer({ startId: ph.dataset.photo, onEdit: (id) => openPhoto(id, app) }); }
   };
   root.onchange = async (e) => {
     if (e.target.matches('input[type=file][name=photo]')) {
       const files = [...e.target.files];
       e.target.value = '';
       if (!files.length) return;
-      const ap = root.querySelector('[name=addPose]');
-      await addPhotos(files, ap ? ap.value : pose, app);
+      await addPhotos(files, pose, app);
     }
   };
   root.oninput = (e) => {
@@ -123,6 +144,13 @@ function bodyHTML() {
   const sorted = [...S.body].sort(byDateDesc);
   const md = METRICS.find((m) => m.id === metric);
   const pts = aggregate(series(metric), period);
+  chartRanges = pts.map((p) => {
+    if (period === 'day') return [p.x, p.x];
+    if (period === 'week') return [p.x, addDays(p.x, 6)];
+    const d = parseYmd(p.x); return [p.x, ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0))];
+  });
+  const marks = new Set();
+  chartRanges.forEach(([a, b], i) => { if (S.photos.some((ph) => ph.date >= a && ph.date <= b)) marks.add(i); });
   const cards = METRICS.map((m) => {
     const s = series(m.id);
     if (!s.length) return `<button type="button" class="metric empty-m ${m.id === metric ? 'on' : ''}" data-metric="${m.id}" style="--c:${m.color}"><span class="m-name"><i></i>${m.name}</span><b class="muted">—</b><small>未記録</small></button>`;
@@ -139,8 +167,9 @@ function bodyHTML() {
     <button type="button" class="btn btn-primary btn-block btn-lg" data-add-body>${icon('scale', 20)}身体測定を記録</button>
     ${secH(`${md.name}の推移`, `<div class="mini-seg">${[['day', '日'], ['week', '週'], ['month', '月']].map(([v, l]) => `<button type="button" class="${period === v ? 'on' : ''}" data-period="${v}">${l}</button>`).join('')}</div>`)}
     <section class="card chart-card">
-      ${lineChart(pts, { unit: md.unit, color: md.color, decimals: md.dec, empty: `${md.name}を2回以上記録すると、ここにグラフが表示されます` })}
-      <p class="fine">${period === 'day' ? '直近60日の記録' : period === 'week' ? '週ごとの平均（最大26週）' : '月ごとの平均（最大24か月）'}${pts.length ? '・グラフを指でなぞると値が見られます' : ''}</p>
+      ${lineChart(pts, { unit: md.unit, color: md.color, decimals: md.dec, marks, empty: `${md.name}を2回以上記録すると、ここにグラフが表示されます` })}
+      <p class="fine">${period === 'day' ? '直近60日の記録' : period === 'week' ? '週ごとの平均（最大26週）' : '月ごとの平均（最大24か月）'}${pts.length ? '・グラフをタップすると、その日の値と写真が見られます' : ''}${marks.size ? '<span class="mark-legend"><i></i>写真あり</span>' : ''}</p>
+      ${pts.length ? '<div class="chart-photo" data-chart-photo></div>' : ''}
     </section>
     <div class="note-card">${icon('info', 18)}<p>体重は水分や食事で日々上下します。増えても失敗ではありません。体重だけで判断せず、写真やウエスト、からだの感覚もあわせて成長を見ていきましょう。</p></div>
     ${secH('測定の記録', `<span class="sec-note">${sorted.length}件</span>`)}
@@ -148,10 +177,30 @@ function bodyHTML() {
       ${sorted.length > bodyLimit ? '<button type="button" class="btn btn-ghost btn-block" data-more-body>もっと見る</button>' : ''}` : emptyState('scale', 'まだ記録がありません', '体重を記録すると、ここに一覧が表示されます。')}`;
 }
 
-/* ---------- 写真 ---------- */
-function photosOf(p) {
-  return S.photos.filter((x) => x.pose === p).sort((a, b) => (a.date === b.date ? a.createdAt - b.createdAt : (a.date < b.date ? -1 : 1)));
+/** グラフで選んだ点の写真パネル */
+function chartPhotoHTML(i) {
+  const range = chartRanges[i];
+  if (!range) return '';
+  const [from, to] = range;
+  const tol = period === 'day' ? 7 : period === 'week' ? 14 : 31;
+  const { photo, exact } = photoForRange(from, to, { tolerance: tol });
+  const label = period === 'day' ? fmtDateLong(from) : period === 'week' ? `${fmtDate(from, { weekday: false })}〜${fmtDate(to, { weekday: false })}の週` : `${Number(from.slice(5, 7))}月`;
+  if (!photo) {
+    return `<div class="cp-empty">${icon('camera', 18)}<span><b>${label}</b>の写真はありません</span><button type="button" class="pill-btn" data-camera>撮影する</button></div>`;
+  }
+  const w = weightNear(photo.date);
+  return `<button type="button" class="cp-card" data-viewer="${photo.id}" data-pose="${photo.pose}">
+    <img src="${photo.thumb}" alt="">
+    <span class="cp-text">
+      <small>${exact ? (period === 'day' ? 'この日の写真' : 'この期間の写真') : '近い日の写真'}</small>
+      <strong>${fmtDateLong(photo.date)}</strong>
+      <span>${poseName(photo.pose)}${w ? ` ・ ${w.toFixed(1)}kg` : ''}</span>
+    </span>
+    <span class="cp-go">変遷を見る${icon('right', 14)}</span>
+  </button>`;
 }
+
+/* ---------- 写真 ---------- */
 
 function photoHTML() {
   const list = photosOf(pose);
@@ -163,19 +212,38 @@ function photoHTML() {
   const B = list.find((x) => x.id === pick.b);
   const all = [...S.photos].sort(byDateDesc);
   return `
-    ${secH('写真を記録')}
-    <section class="card">
-      <p class="hint top">同じ場所・同じ明るさ・同じポーズで撮ると、変化が分かりやすくなります。</p>
-      <div class="field"><span class="field-label">ポーズ</span>${choice('addPose', POSES, pose)}</div>
-      <label class="btn btn-primary btn-block btn-lg file-btn">${icon('camera', 20)}撮影する・写真を選ぶ
-        <input type="file" name="photo" accept="image/*" multiple>
-      </label>
-      <p class="fine">写真はこの端末の中だけに保存されます（自動で軽く圧縮します）。</p>
+    <section class="cam-hero">
+      <div class="cam-hero-art" aria-hidden="true">
+        <svg viewBox="0 0 300 400"><g fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-dasharray="14 12">
+          <ellipse cx="150" cy="92" rx="37" ry="47"/>
+          <path d="M133 136 C133 150 131 158 121 164 C101 172 73 174 59 186 C45 198 41 216 41 238 L35 330 C33 360 35 388 36 400"/>
+          <path d="M167 136 C167 150 169 158 179 164 C199 172 227 174 241 186 C255 198 259 216 259 238 L265 330 C267 360 265 388 264 400"/>
+        </g></svg>
+      </div>
+      <div class="cam-hero-text">
+        <p class="lt-kicker">BODY PHOTO</p>
+        <h3>上半身を、いつも同じ画角で</h3>
+        <p>シルエットと水平器のガイドに合わせるだけ。前回の写真を重ねて位置もそろえられます。</p>
+      </div>
+      <button type="button" class="btn btn-light btn-block btn-lg" data-camera>${icon('camera', 20)}ガイド付きで撮影</button>
+      <label class="cam-hero-file file-btn">${icon('image', 15)}アルバムから選ぶ<input type="file" name="photo" accept="image/*" multiple></label>
     </section>
 
-    ${secH('ビフォー・アフター', `<div class="mini-seg">${POSES.map((p) => `<button type="button" class="${pose === p.value ? 'on' : ''}" data-pose="${p.value}">${p.label}</button>`).join('')}</div>`)}
+    <div class="pose-row">${segmented('pose', POSES, pose)}</div>
+
+    ${secH('これまでの変遷', list.length ? `<span class="sec-note">${list.length}枚</span>` : '')}
+    ${list.length ? `<button type="button" class="card film-card" data-viewer="" data-pose="${pose}">
+      <div class="film">${filmstripHTML(list)}</div>
+      <div class="film-foot">
+        <span class="film-play"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.2-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg></span>
+        <span class="film-text"><strong>コマ送りで見る</strong><small>${fmtDate(list[0].date, { weekday: false })} 〜 ${fmtDate(list[list.length - 1].date, { weekday: false })}・左右スワイプで1枚ずつ</small></span>
+        ${icon('right', 18)}
+      </div>
+    </button>` : emptyState('growth', `${poseName(pose)}の写真はまだありません`, '撮影を続けると、からだの変化をパラパラ漫画のように見返せます。')}
+
+    ${secH('ビフォー・アフター')}
     <section class="card">
-      ${list.length < 2 ? emptyState('compare', `${poseName(pose)}の写真を2枚以上で比較できます`, `過去と今を並べて、見た目の変化を確かめられます。${list.length ? 'あと1枚です。' : ''}`) : `
+      ${list.length < 2 ? emptyState('compare', `${poseName(pose)}の写真が2枚以上で比較できます`, `過去と今を並べて、見た目の変化を確かめられます。${list.length ? 'あと1枚です。' : ''}`) : `
         <div class="mini-seg wide">${[['side', '並べて比較'], ['slider', 'スライダー']].map(([v, l]) => `<button type="button" class="${cmpMode === v ? 'on' : ''}" data-cmp="${v}">${l}</button>`).join('')}</div>
         ${cmpMode === 'side' ? `
           <div class="cmp-side">
@@ -213,15 +281,6 @@ function thumbBtn(x, slot, on) {
   return `<button type="button" class="thumb ${on ? 'on' : ''}" data-pick="${x.id}" data-slot="${slot}"><img src="${x.thumb}" alt=""><span>${fmtDate(x.date, { weekday: false })}</span></button>`;
 }
 
-async function fullUrl(id) {
-  if (urlCache.has(id)) return urlCache.get(id);
-  const blob = await store.getPhotoBlob(id);
-  if (!blob) return null;
-  const u = URL.createObjectURL(blob);
-  urlCache.set(id, u);
-  return u;
-}
-
 async function hydratePhotos(root) {
   for (const img of root.querySelectorAll('img[data-full]')) {
     const meta = S.photos.find((p) => p.id === img.dataset.full);
@@ -231,43 +290,12 @@ async function hydratePhotos(root) {
   }
 }
 
-function loadImage(src) {
-  return new Promise((res, rej) => {
-    const img = new Image();
-    img.onload = () => res(img);
-    img.onerror = () => rej(new Error('画像を読み込めませんでした'));
-    img.src = src;
-  });
-}
-
-async function resize(img, max, quality) {
-  const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-  const w = Math.round(img.naturalWidth * scale);
-  const h = Math.round(img.naturalHeight * scale);
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0, w, h);
-  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', quality));
-  return { blob, w, h, canvas: c };
-}
-
-async function addPhotos(files, p, app) {
-  toast('写真を保存しています…', { duration: 1500 });
+async function addPhotos(files, p) {
+  toast('写真を保存しています…', { duration: 1500, icon: 'image' });
   let count = 0;
   for (const file of files) {
     try {
-      const url = URL.createObjectURL(file);
-      const img = await loadImage(url);
-      const full = await resize(img, 1280, 0.82);
-      const th = await resize(img, 320, 0.72);
-      URL.revokeObjectURL(url);
-      const thumb = th.canvas.toDataURL('image/jpeg', 0.72);
-      const id = uid();
-      await store.savePhotoBlob(id, await full.blob.arrayBuffer(), 'image/jpeg');
-      const fileDate = file.lastModified ? new Date(file.lastModified) : null;
-      const d = today();
-      await store.saveRecord('photos', { id, date: d, pose: p, thumb, w: full.w, h: full.h, size: full.blob.size, fileDate: fileDate ? fileDate.toISOString() : null }, { silent: true });
+      await savePhotoFile(file, { pose: p });
       count++;
     } catch (err) {
       console.error(err);
@@ -304,7 +332,7 @@ async function openPhoto(id, app) {
         if (e.target.closest('[data-del]')) {
           if (!(await confirmDialog('この写真を削除しますか？<br><small>削除すると元に戻せません。</small>', { ok: '削除する', danger: true }))) return;
           await store.deleteRecord('photos', id);
-          if (urlCache.has(id)) { URL.revokeObjectURL(urlCache.get(id)); urlCache.delete(id); }
+          forgetUrl(id);
           close();
           await notify({ message: '写真を削除しました', silentXP: true });
         }

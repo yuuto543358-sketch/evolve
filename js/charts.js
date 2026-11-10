@@ -45,7 +45,7 @@ export function radar(stats, defs, { size = 200 } = {}) {
  * 折れ線グラフ
  * @param {Array<{x:string(YYYY-MM-DD), y:number, label?:string}>} pts
  */
-export function lineChart(pts, { unit = '', color = '#22806F', height = 190, decimals = 1, empty = 'まだデータがありません' } = {}) {
+export function lineChart(pts, { unit = '', color = '#22806F', height = 190, decimals = 1, empty = 'まだデータがありません', marks = null } = {}) {
   const W = 340; const H = height;
   const padL = 36; const padR = 12; const padT = 18; const padB = 26;
   if (!pts.length) {
@@ -81,6 +81,8 @@ export function lineChart(pts, { unit = '', color = '#22806F', height = 190, dec
   const area = `${line} L${X(xs[n - 1]).toFixed(1)},${H - padB} L${X(xs[0]).toFixed(1)},${H - padB} Z`;
   const gid = 'lg' + Math.random().toString(36).slice(2, 7);
   const dots = pts.map((p, i) => `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${n > 40 ? 0 : 3}" fill="#fff" stroke="${color}" stroke-width="2"/>`).join('');
+  // 写真がある点に金色の輪をつける
+  const markEls = marks ? pts.map((p, i) => (marks.has(i) ? `<g class="photo-mark" transform="translate(${X(xs[i]).toFixed(1)},${Y(p.y).toFixed(1)})"><circle r="7.5" fill="none" stroke="#C9A55C" stroke-width="2"/><circle cx="6" cy="-6" r="3.6" fill="#C9A55C" stroke="#fff" stroke-width="1.2"/></g>` : '')).join('') : '';
   const last = pts[n - 1];
   const lx = X(xs[n - 1]); const ly = Y(last.y);
   const scrubPts = pts.map((p, i) => [Math.round(X(xs[i]) * 10) / 10, Math.round(Y(p.y) * 10) / 10, p.label || `${parseYmd(p.x).getMonth() + 1}/${parseYmd(p.x).getDate()}`, `${fmtNum(p.y, decimals)}${unit}`]);
@@ -90,6 +92,7 @@ export function lineChart(pts, { unit = '', color = '#22806F', height = 190, dec
     <path d="${area}" fill="url(#${gid})"/>
     <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
     ${dots}
+    ${markEls}
     <circle cx="${lx}" cy="${ly}" r="5" fill="${color}" stroke="#fff" stroke-width="2"/>
     <g class="last-label" transform="translate(${Math.min(lx, W - 44)},${Math.max(ly - 12, 10)})"><text text-anchor="middle" font-size="10.5" font-weight="700" fill="${color}">${fmtNum(last.y, decimals)}${unit}</text></g>
     <g class="scrub" style="opacity:0">
@@ -116,7 +119,7 @@ export function miniBars(values, { height = 44, color = 'var(--primary)', empty 
   return `<svg class="mini-bars" viewBox="0 0 ${W} ${H}" width="100%" aria-hidden="true">${goalLine}${bars}${lbl}</svg>`;
 }
 
-/** グラフを指でなぞると、その日の値を表示する */
+/** グラフを指でなぞる・タップすると、その日の値を表示（選んだ点は 'chartselect' イベントで通知） */
 export function bindCharts(root) {
   root.querySelectorAll('svg.line-chart[data-pts]').forEach((svg) => {
     const pts = JSON.parse(svg.dataset.pts);
@@ -128,11 +131,7 @@ export function bindCharts(root) {
     const text = tip.querySelector('text');
     const vb = svg.viewBox.baseVal;
     let lastIdx = -1;
-    const show = (e) => {
-      const r = svg.getBoundingClientRect();
-      const x = ((e.clientX - r.left) / r.width) * vb.width;
-      let best = 0;
-      pts.forEach((p, i) => { if (Math.abs(p[0] - x) < Math.abs(pts[best][0] - x)) best = i; });
+    const select = (best, { silent = false } = {}) => {
       const [px, py, label, value] = pts[best];
       line.setAttribute('x1', px); line.setAttribute('x2', px);
       dot.setAttribute('cx', px); dot.setAttribute('cy', py);
@@ -141,13 +140,24 @@ export function bindCharts(root) {
       text.textContent = `${label}  ${value}`;
       scrub.style.opacity = 1;
       if (last) last.style.opacity = 0;
-      if (best !== lastIdx) { lastIdx = best; try { if (navigator.vibrate) navigator.vibrate(3); } catch { /* ignore */ } }
+      if (best !== lastIdx) {
+        lastIdx = best;
+        if (!silent) { try { if (navigator.vibrate) navigator.vibrate(3); } catch { /* ignore */ } }
+        svg.dispatchEvent(new CustomEvent('chartselect', { bubbles: true, detail: { index: best } }));
+      }
     };
-    const hide = () => { scrub.style.opacity = 0; if (last) last.style.opacity = 1; lastIdx = -1; };
-    svg.addEventListener('pointerdown', (e) => { show(e); });
-    svg.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' || e.buttons || e.pressure) show(e); });
-    svg.addEventListener('pointerup', () => setTimeout(hide, 1200));
-    svg.addEventListener('pointerleave', hide);
+    const pick = (e) => {
+      const r = svg.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * vb.width;
+      let best = 0;
+      pts.forEach((p, i) => { if (Math.abs(p[0] - x) < Math.abs(pts[best][0] - x)) best = i; });
+      select(best);
+    };
+    let down = false;
+    svg.addEventListener('pointerdown', (e) => { down = true; pick(e); });
+    svg.addEventListener('pointermove', (e) => { if (down || e.pointerType === 'mouse') pick(e); });
+    window.addEventListener('pointerup', () => { down = false; });
+    svg.selectIndex = (i) => select(Math.max(0, Math.min(pts.length - 1, i)), { silent: true });
   });
 }
 

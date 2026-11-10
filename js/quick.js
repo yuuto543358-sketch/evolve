@@ -6,6 +6,7 @@ import { icon } from './icons.js';
 import { openSheet } from './ui.js';
 import { mealEditor, bodyEditor } from './records.js';
 import { notify } from './app.js';
+import { openCamera } from './camera.js';
 import { today, fmtNum } from './util.js';
 
 function slotByTime() {
@@ -30,7 +31,7 @@ export function openQuickAdd(app) {
     { id: 'shake', ic: 'cup', label: 'プロテイン', sub: `タップで +${per}g`, tone: 'gold' },
     { id: 'meal', ic: 'meal', label: slotName, sub: '食事を記録', tone: 'amber' },
     { id: 'body', ic: 'scale', label: '身体測定', sub: '体重・体脂肪', tone: 'sage' },
-    { id: 'photo', ic: 'camera', label: '写真', sub: '今の身体を残す', tone: 'slate' },
+    { id: 'photo', ic: 'camera', label: '写真', sub: '上半身をガイド撮影', tone: 'slate' },
   ];
   openSheet({
     title: '記録する',
@@ -56,12 +57,13 @@ export function openQuickAdd(app) {
           return;
         }
         close();
+        // カメラはタップの直後に開く（iPhoneで傾きセンサーの許可を出すため）
+        if (q === 'photo') { openCamera({ pose: 'front' }); return; }
         setTimeout(() => {
           if (q === 'strength') app.go('training', { mode: 'strength', date: t });
           else if (q === 'cardio') app.go('training', { mode: 'cardio', date: t });
           else if (q === 'meal') mealEditor({ slot, date: t });
           else if (q === 'body') bodyEditor({ date: t });
-          else if (q === 'photo') app.go('growth', { tab: 'photo' });
         }, 180);
       });
     },

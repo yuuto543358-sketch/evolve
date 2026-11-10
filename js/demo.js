@@ -3,6 +3,7 @@ import * as store from './store.js';
 import { S } from './store.js';
 import { computeGame } from './game.js';
 import { today, addDays, parseYmd } from './util.js';
+import { savePhotoCanvas, PHOTO_W, PHOTO_H } from './photos.js';
 
 function rnd(seed) {
   let s = seed;
@@ -53,6 +54,13 @@ export async function seedDemo() {
   await store.saveMany('cardio', cardio);
   await store.saveMany('meals', meals);
   await store.saveMany('body', body);
+  // デモ用の写真（イラスト）。本物の写真ではないことが分かるよう「DEMO」と入れています
+  for (let i = 0; i <= days; i += 7) {
+    const d = addDays(start, i);
+    const prog = i / days;
+    await savePhotoCanvas(demoPhoto(prog, 'front'), { pose: 'front', date: d });
+    if (i % 14 === 0) await savePhotoCanvas(demoPhoto(prog, 'side'), { pose: 'side', date: d });
+  }
   // 実績の達成日を日付順に再現
   const unlocked = {};
   for (let i = 0; i <= days; i++) {
@@ -64,4 +72,48 @@ export async function seedDemo() {
   await store.setAchievements(unlocked);
   const g = computeGame();
   await store.setMeta({ lastSeenLevel: g.level, demo: true });
+}
+
+function demoPhoto(prog, pose) {
+  const W = PHOTO_W; const H = PHOTO_H;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#E4EAE7'); bg.addColorStop(1, '#CBD5D1');
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const k = W / 300; // シルエット座標(300x400)からの倍率
+  g.save(); g.scale(k, k);
+  g.fillStyle = '#93A7A0';
+  if (pose === 'side') {
+    g.beginPath(); g.ellipse(150, 92, 38, 47, 0, 0, Math.PI * 2); g.fill();
+    const belly = 120 - prog * 10;
+    g.beginPath();
+    g.moveTo(134, 140); g.lineTo(170, 140);
+    g.bezierCurveTo(200, 175, 204, 215, 202, 250); g.bezierCurveTo(200, 300, 196, 350, 194, 400);
+    g.lineTo(belly, 400); g.bezierCurveTo(belly - 4, 350, belly + 2, 300, 122, 280);
+    g.bezierCurveTo(116, 260, 106, 244, 106, 216); g.bezierCurveTo(106, 190, 118, 172, 134, 160);
+    g.closePath(); g.fill();
+  } else {
+    g.beginPath(); g.ellipse(150, 92, 36, 46, 0, 0, Math.PI * 2); g.fill();
+    const waist = 58 - prog * 8;
+    const sh = 108 + prog * 4;
+    g.beginPath();
+    g.moveTo(134, 135); g.lineTo(166, 135); g.lineTo(168, 160);
+    g.bezierCurveTo(200, 168, 150 + sh, 172, 150 + sh, 230);
+    g.lineTo(150 + sh - 4, 330); g.lineTo(150 + sh - 6, 400);
+    g.lineTo(150 + waist + 18, 400); g.lineTo(150 + waist + 14, 300); g.lineTo(150 + waist, 400);
+    g.lineTo(150 - waist, 400); g.lineTo(150 - waist - 14, 300); g.lineTo(150 - waist - 18, 400);
+    g.lineTo(150 - sh + 6, 400); g.lineTo(150 - sh + 4, 330); g.lineTo(150 - sh, 230);
+    g.bezierCurveTo(150 - sh, 172, 100, 168, 132, 160);
+    g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,.25)'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(150, 200); g.lineTo(150, 380); g.stroke();
+    g.beginPath(); g.moveTo(118, 215); g.quadraticCurveTo(150, 232, 182, 215); g.stroke();
+  }
+  g.restore();
+  g.fillStyle = 'rgba(30,50,45,.45)';
+  g.font = 'bold 34px sans-serif';
+  g.fillText('DEMO', 34, 64);
+  return c;
 }
