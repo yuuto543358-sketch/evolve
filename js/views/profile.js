@@ -5,6 +5,7 @@ import { ACHIEVEMENTS, TITLES, XP_RULES, xpForLevel, STAT_DEFS } from '../game.j
 import { icon, logoMark } from '../icons.js';
 import { openSheet, stepper, chips, choice, num, val, toast, confirmDialog, largeTitle, secH } from '../ui.js';
 import { ring } from '../charts.js';
+import { openHealthImport } from '../health.js';
 import { exportBackup, restoreBackup, validateBackup, storageInfo } from '../backup.js';
 import { isDemo, setDemo, clearAll, deleteDatabase } from '../db.js';
 import { today, esc, fmtNum, diffDays, fmtDateLong, ymd } from '../util.js';
@@ -86,6 +87,12 @@ export function render(root, app) {
       ${row({ ic: 'target', color: '#3B7FA8', label: '目指す身体', value: esc(goal.name), act: 'profile' })}
     </div>
 
+    ${secH('連携')}
+    <div class="group">
+      ${row({ ic: 'heart', color: '#D2493E', label: 'Apple Watch・ヘルスケア', sub: S.meta.lastHealthImport ? `最後の取り込み：${relDays(S.meta.lastHealthImport)}` : '歩数・消費カロリー・ワークアウト・体重', act: 'health' })}
+      ${row({ ic: 'walk', color: '#3B7FA8', label: '1日の歩数の目標', value: `${fmtNum(S.settings.stepGoal || 8000)}歩`, act: 'stepgoal' })}
+    </div>
+
     ${secH('設定')}
     <div class="group">
       ${row({ ic: 'cup', color: '#C99B47', label: 'プロテイン1杯の量', value: `${S.settings.proteinPerShake}g`, act: 'shake' })}
@@ -128,6 +135,8 @@ export function render(root, app) {
     if (!b) return;
     const act = b.dataset.act;
     if (act === 'ach-all') { showAllAch = !showAllAch; app.refresh(); return; }
+    if (act === 'health') { openHealthImport(); return; }
+    if (act === 'stepgoal') { editStepGoal(); return; }
     if (act === 'profile') editProfile(app);
     else if (act === 'shake') editShake(app);
     else if (act === 'kcal') editKcal(app);
@@ -337,4 +346,28 @@ async function wipe() {
   await clearAll();
   toast('削除しました');
   setTimeout(() => { location.hash = '#home'; location.reload(); }, 600);
+}
+
+function relDays(ts) {
+  const d = Math.floor((Date.now() - ts) / 86400000);
+  return d === 0 ? '今日' : `${d}日前`;
+}
+
+function editStepGoal() {
+  openSheet({
+    title: '1日の歩数の目標',
+    html: `<form class="form" onsubmit="return false">
+      <div class="field"><span class="field-label">目標の歩数</span>${stepper('goal', S.settings.stepGoal || 8000, { step: 500, min: 1000, max: 30000, unit: '歩' })}
+        ${chips('goal', [5000, 6000, 8000, 10000], S.settings.stepGoal || 8000, { labels: ['5千', '6千', '8千', '1万'] })}</div>
+      <p class="hint">Apple Watchから取り込んだ歩数を、ホームでこの目標と比べて表示します。</p>
+      <div class="sheet-actions"><span></span><button type="button" class="btn btn-primary" data-save>保存する</button></div></form>`,
+    onMount(body, close) {
+      body.onclick = async (e) => {
+        if (!e.target.closest('[data-save]')) return;
+        await store.setSettings({ stepGoal: num(body, 'goal') || 8000 });
+        close();
+        await notify({ message: '保存しました', silentXP: true });
+      };
+    },
+  });
 }

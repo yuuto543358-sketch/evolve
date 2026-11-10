@@ -13,6 +13,7 @@ export const XP_RULES = [
   { label: 'ウォーキング', detail: '1回5XP＋1分ごとに0.4XP' },
   { label: 'サイクリング・その他', detail: '1回8XP＋1分ごとに0.5XP' },
   { label: '有酸素運動の上限', detail: '1日最大90XP' },
+  { label: '歩数（Apple Watch）', detail: '1000歩ごとに2XP（1日最大20XP）' },
   { label: '食事記録', detail: '朝・昼・夕・間食それぞれ5XP（1日最大20XP）、プロテイン記録3XP' },
   { label: 'タンパク質目標達成', detail: 'ボーナス20XP' },
   { label: '身体測定', detail: '1日15XP' },
@@ -64,6 +65,9 @@ export const ACHIEVEMENTS = [
   { id: 'reps10000', name: '10000レップ', desc: '筋トレの回数が累計10000回', xp: 200, icon: 'dumbbell', test: (c) => c.totalReps >= 10000 },
   { id: 'km10', name: '累計10km', desc: 'ラン・ウォークの距離が累計10km', xp: 50, icon: 'route', test: (c) => c.totalKm >= 10 },
   { id: 'km100', name: '累計100km', desc: 'ラン・ウォークの距離が累計100km', xp: 200, icon: 'route', test: (c) => c.totalKm >= 100 },
+  { id: 'health_link', name: 'つながる記録', desc: 'ヘルスケアから記録を取り込む', xp: 20, icon: 'heart', test: (c) => c.healthLinked },
+  { id: 'steps10k', name: '1日1万歩', desc: '1日で10000歩あるく', xp: 50, icon: 'walk', test: (c) => c.maxSteps >= 10000 },
+  { id: 'steps500k', name: '累計50万歩', desc: '歩数が累計500000歩', xp: 150, icon: 'route', test: (c) => c.totalSteps >= 500000 },
   { id: 'pb', name: '自己ベスト更新', desc: '筋トレで自己ベストを更新', xp: 30, icon: 'star', test: (c) => c.pbCount >= 1 },
   { id: 'lv5', name: 'Lv5 到達', desc: 'レベル5になる', xp: 0, icon: 'crown', test: (c) => c.level >= 5 },
   { id: 'lv10', name: 'Lv10 到達', desc: 'レベル10になる', xp: 0, icon: 'crown', test: (c) => c.level >= 10 },
@@ -126,7 +130,7 @@ function cardioEntryXP(c) {
 function buildDays(data, asOf) {
   const days = new Map();
   const get = (d) => {
-    if (!days.has(d)) days.set(d, { date: d, w: [], c: [], m: [], body: false, photo: false });
+    if (!days.has(d)) days.set(d, { date: d, w: [], c: [], m: [], body: false, photo: false, steps: 0, activeKcal: 0 });
     return days.get(d);
   };
   const ok = (r) => r.date && (!asOf || r.date <= asOf);
@@ -135,6 +139,7 @@ function buildDays(data, asOf) {
   for (const m of data.meals) if (ok(m)) get(m.date).m.push(m);
   for (const b of data.body) if (ok(b)) get(b.date).body = true;
   for (const p of data.photos) if (ok(p)) get(p.date).photo = true;
+  for (const x of (data.daily || [])) if (ok(x)) { const d = get(x.date); d.steps = Number(x.steps) || 0; d.activeKcal = Number(x.activeKcal) || 0; }
   return days;
 }
 
@@ -159,11 +164,13 @@ export function dayXP(day, proteinGoal) {
   const proteinBonus = day.m.length && proteinGoal && p.total >= proteinGoal ? 20 : 0;
   const body = day.body ? 15 : 0;
   const photo = day.photo ? 10 : 0;
+  // 歩数：1000歩ごとに2XP（1日最大20XP）
+  const steps = Math.min(20, Math.floor((day.steps || 0) / 1000) * 2);
   return {
-    str, car, meal, proteinBonus, body, photo,
-    total: str + car + meal + proteinBonus + body + photo,
+    str, car, meal, proteinBonus, body, photo, steps,
+    total: str + car + meal + proteinBonus + body + photo + steps,
     exercised: day.w.length > 0 || day.c.length > 0,
-    active: day.w.length > 0 || day.c.length > 0 || day.m.length > 0 || day.body || day.photo,
+    active: day.w.length > 0 || day.c.length > 0 || day.m.length > 0 || day.body || day.photo || (day.steps || 0) >= 1000,
     proteinMet: proteinBonus > 0,
   };
 }
@@ -213,7 +220,7 @@ export function computeGame(opts = {}) {
     dayInfo.set(d, info);
     recordXP += info.total;
     pts.str += info.str;
-    pts.end += info.car;
+    pts.end += info.car + info.steps;
     pts.cnd += info.meal + info.proteinBonus + info.body + info.photo;
     if (info.active) { activeDays++; activeSet.add(d); }
     if (info.proteinMet) proteinGoalDays++;
@@ -281,6 +288,9 @@ export function computeGame(opts = {}) {
     totalReps: workouts.filter((w) => w.unit !== 'sec').reduce((t, w) => t + (w.reps || 0) * (w.sets || 1), 0),
     totalKm: cardio.filter((c) => c.kind === 'run' || c.kind === 'walk').reduce((t, c) => t + (Number(c.distanceKm) || 0), 0),
     pbCount: pbs.events.length,
+    healthLinked: (data.daily || []).some((x) => !asOf || x.date <= asOf) || cardio.some((c) => c.source === 'health'),
+    maxSteps: Math.max(0, ...(data.daily || []).filter((x) => !asOf || x.date <= asOf).map((x) => Number(x.steps) || 0)),
+    totalSteps: (data.daily || []).filter((x) => !asOf || x.date <= asOf).reduce((t, x) => t + (Number(x.steps) || 0), 0),
   };
 
   // 実績（一度達成した実績は消えません）

@@ -50,6 +50,12 @@ export async function seedDemo() {
       body.push({ date: d, weight: Math.round((68.4 - prog * 1.4 + (r() - 0.5) * 0.6) * 10) / 10, bodyFat: Math.round((19.5 - prog * 1.8 + (r() - 0.5) * 0.4) * 10) / 10, muscle: Math.round((52.6 + prog * 0.5) * 10) / 10, waist: Math.round((81 - prog * 2.2) * 2) / 2 });
     }
   }
+  const daily = [];
+  for (let i = 0; i <= days; i++) {
+    const dd = addDays(start, i);
+    daily.push({ id: `d-${dd}`, date: dd, source: 'demo', steps: Math.round(5200 + r() * 6000 + (i / days) * 1500), activeKcal: Math.round(260 + r() * 260) });
+  }
+  await store.bulkSave('daily', daily);
   await store.saveMany('workouts', workouts);
   await store.saveMany('cardio', cardio);
   await store.saveMany('meals', meals);

@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { uid, today } from './util.js';
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 export const SCHEMA_VERSION = 1;
 
 export const DEFAULT_SETTINGS = {
@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   kcalWeightAdjust: true,       // 消費カロリーを体重で補正する
   mets: { run: 8.3, walk: 3.5, cycle: 6.8, other: 4.0 }, // 速度不明時のMETs
   useSpeedMets: true,           // 距離と時間から速度を求めてMETsを調整
+  stepGoal: 8000,               // 1日の歩数の目標
 };
 
 export const DEFAULT_EXERCISES = [
@@ -42,6 +43,7 @@ export const S = {
   meals: [],
   body: [],
   photos: [],         // 写真の情報（本体画像は photoBlobs に別保存）
+  daily: [],          // ヘルスケアの1日ごとの記録（歩数・アクティブカロリー）
 };
 
 const listeners = new Set();
@@ -153,3 +155,15 @@ export function bodyWeightAt(date) {
 }
 
 export function exerciseById(id) { return S.exercises.find((e) => e.id === id); }
+
+/** たくさんの記録をまとめて保存（取り込み用・速い） */
+export async function bulkSave(storeName, recs) {
+  if (!recs.length) return [];
+  const now = Date.now();
+  const items = recs.map((r) => ({ ...r, id: r.id || uid(), createdAt: r.createdAt || now, updatedAt: now }));
+  await db.bulkPut(storeName, items);
+  const map = new Map(S[storeName].map((x) => [x.id, x]));
+  for (const it of items) map.set(it.id, it);
+  S[storeName] = [...map.values()];
+  return items;
+}

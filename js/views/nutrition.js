@@ -138,7 +138,9 @@ function slotHTML(slot, items) {
 
 function kcalHTML(meals) {
   const intake = meals.reduce((t, m) => t + (Number(m.kcal) || 0), 0);
-  const burned = S.workouts.filter((w) => w.date === date).reduce((t, w) => t + workoutKcal(w), 0)
+  const dl = (S.daily || []).find((x) => x.date === date && x.activeKcal);
+  // Apple Watchのアクティブカロリーがあればそれを使う（運動の推定値と二重にならないよう）
+  const burned = dl ? Number(dl.activeKcal) : S.workouts.filter((w) => w.date === date).reduce((t, w) => t + workoutKcal(w), 0)
     + S.cardio.filter((c) => c.date === date).reduce((t, c) => t + cardioRecordKcal(c), 0);
   const weight = store.bodyWeightAt(date);
   const base = bmr(S.profile, weight);
@@ -146,7 +148,7 @@ function kcalHTML(meals) {
   return `
     <div class="kcal-grid">
       <div><span>摂取（記録分）</span><b>${fmtNum(intake)}<small>kcal</small></b></div>
-      <div><span>運動での消費</span><b>${fmtNum(burned)}<small>kcal</small></b></div>
+      <div><span>${dl ? '活動での消費（Apple Watch）' : '運動での消費'}</span><b>${fmtNum(burned)}<small>kcal</small></b></div>
       ${daily ? `<div><span>1日の消費目安</span><b>${fmtNum(daily + burned)}<small>kcal</small></b></div>` : ''}
     </div>
     <p class="fine">すべて目安です。摂取カロリーは入力した分だけを合計しています。${daily ? '1日の消費目安は、基礎代謝（年齢・身長・体重から推定）×1.4＋運動での消費です。' : ''}数字にとらわれすぎず、参考程度にご覧ください。</p>`;

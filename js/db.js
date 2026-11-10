@@ -1,8 +1,9 @@
 // IndexedDB をかんたんに使うための小さなラッパー
 // データはこの端末のブラウザ内に保存されます（サーバーは不要）。
 
-const DB_VERSION = 1;
-export const RECORD_STORES = ['exercises', 'workouts', 'cardio', 'meals', 'body', 'photos'];
+const DB_VERSION = 2;
+// daily = ヘルスケア（Apple Watch）から取り込んだ1日ごとの歩数・アクティブカロリー
+export const RECORD_STORES = ['exercises', 'workouts', 'cardio', 'meals', 'body', 'photos', 'daily'];
 const ALL_STORES = ['kv', ...RECORD_STORES, 'photoBlobs'];
 
 let dbPromise = null;

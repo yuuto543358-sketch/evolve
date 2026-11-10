@@ -8,6 +8,7 @@ import { ring, radar, miniBars } from '../charts.js';
 import { largeTitle, secH, countAttr } from '../ui.js';
 import { openDaySheet, unitLabel } from '../records.js';
 import { notify } from '../app.js';
+import { openHealthImport } from '../health.js';
 import { today, addDays, fmtNum, fmtDate, greeting, esc, parseYmd, ymd, pad, diffDays, relDay, byDateDesc } from '../util.js';
 
 let calMonth = null;
@@ -30,6 +31,7 @@ export function render(root, app) {
       right: `<a class="avatar" href="#profile" aria-label="プロフィール">${logoMark(26, g.stage.index)}<span class="avatar-lv num">${g.level}</span></a>`,
     })}
     ${levelCard(g)}
+    ${activityCard()}
     ${secH('今日のおすすめ')}
     ${recommendCard(g, p)}
     ${secH('ステータス', '<span class="sec-note">今週の伸び</span>')}
@@ -46,6 +48,7 @@ export function render(root, app) {
     const nav = e.target.closest('[data-go]');
     if (nav) { app.go(nav.dataset.go, nav.dataset.params ? JSON.parse(nav.dataset.params) : {}); return; }
     if (e.target.closest('[data-shake]')) { await addShake(); return; }
+    if (e.target.closest('[data-health]')) { openHealthImport(); return; }
     const cm = e.target.closest('[data-cal]');
     if (cm) {
       const d = parseYmd(calMonth + '-01');
@@ -96,6 +99,37 @@ function levelCard(g) {
       <div class="hero-week-h"><span>この7日間</span><span class="today-xp ${todayXP ? 'on' : ''}">今日 <b class="num">+${todayXP}</b> XP</span></div>
       ${miniBars(vals, { labels, color: 'rgba(255,255,255,.55)', empty: 'rgba(255,255,255,.14)', highlight: 6, hiColor: '#E7C77E', labelColor: 'rgba(255,255,255,.6)', height: 50 })}
     </div>
+  </section>`;
+}
+
+/** Apple Watch（ヘルスケア）から取り込んだ今日の活動 */
+function activityCard() {
+  const daily = S.daily || [];
+  if (!daily.length) return '';
+  const t = today();
+  const latest = [...daily].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  const cur = daily.find((x) => x.date === t) || latest;
+  const goal = S.settings.stepGoal || 8000;
+  const steps = Number(cur.steps) || 0;
+  const days = Array.from({ length: 7 }, (_, i) => addDays(t, i - 6));
+  const vals = days.map((d) => Number((daily.find((x) => x.date === d) || {}).steps) || 0);
+  const labels = days.map((d) => ['日', '月', '火', '水', '木', '金', '土'][parseYmd(d).getDay()]);
+  return `
+  ${secH(cur.date === t ? '今日の活動' : '最近の活動', '<button type="button" class="sec-link" data-health>' + icon('download', 14) + '取り込む</button>')}
+  <section class="card activity">
+    <div class="act-top">
+      <div class="act-ring">
+        ${ring(steps / goal, { size: 104, stroke: 10, grad: ['#5AA9D6', '#3B7FA8'], track: 'rgba(59,127,168,.12)' })}
+        <div class="act-ring-c"><strong class="num" ${countAttr('steps', steps)}>${fmtNum(steps)}</strong><span>歩</span></div>
+      </div>
+      <div class="act-side">
+        <p class="act-date">${cur.date === t ? '今日' : `${fmtDate(cur.date)}の記録`}・目標 ${fmtNum(goal)}歩</p>
+        <div class="act-stat"><span class="act-ic" style="--c:#D9774B">${icon('flame', 15)}</span><b class="num">${cur.activeKcal ? fmtNum(cur.activeKcal) : '—'}</b><small>kcal アクティブ</small></div>
+        <div class="act-stat"><span class="act-ic" style="--c:#3B7FA8">${icon('target', 15)}</span><b class="num">${Math.min(999, Math.round((steps / goal) * 100))}</b><small>% 目標達成</small></div>
+      </div>
+    </div>
+    ${miniBars(vals, { labels, color: '#3B7FA8', highlight: vals.length - 1, hiColor: '#5AA9D6', height: 54, goal })}
+    <p class="fine">Apple Watch・iPhoneの「ヘルスケア」から取り込んだ記録です${S.meta.lastHealthImport ? `（最後の取り込み：${new Date(S.meta.lastHealthImport).getMonth() + 1}/${new Date(S.meta.lastHealthImport).getDate()}）` : ''}。</p>
   </section>`;
 }
 

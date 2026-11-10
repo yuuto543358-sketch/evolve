@@ -55,7 +55,7 @@ export function workoutRow(w) {
 }
 export function cardioRow(c) {
   const k = cardioKind(c.kind);
-  return row({ ic: k.icon, title: c.kind === 'other' && c.label ? esc(c.label) : k.name, sub: cardioText(c), right: `${fmtNum(cardioRecordKcal(c))}<small>kcal</small>`, attrs: `data-edit="cardio" data-id="${c.id}"`, edit: { store: 'cardio', id: c.id }, color: 'var(--blue)' });
+  return row({ ic: k.icon, title: c.label ? esc(c.label) : k.name, sub: `${cardioText(c)}${c.source === 'health' ? ' ・ <span class="src-tag">Apple Watch</span>' : ''}`, right: `${fmtNum(cardioRecordKcal(c))}<small>kcal</small>`, attrs: `data-edit="cardio" data-id="${c.id}"`, edit: { store: 'cardio', id: c.id }, color: 'var(--blue)' });
 }
 export function mealRow(m) {
   return row({ ic: SLOT_ICON[m.slot] || 'meal', title: m.slot === 'protein' ? 'プロテイン' : (esc(m.content) || SLOT_LABEL[m.slot]), sub: `${SLOT_LABEL[m.slot] || ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}`, right: `${fmtNum(m.protein || 0, 1)}<small>g</small>`, attrs: `data-edit="meals" data-id="${m.id}"`, edit: { store: 'meals', id: m.id }, color: 'var(--gold-deep)' });
@@ -297,7 +297,9 @@ export function dayRecordsHTML(date) {
   const ms = S.meals.filter((m) => m.date === date).sort(byDateDesc);
   const bs = S.body.filter((b) => b.date === date).sort(byDateDesc);
   const ps = S.photos.filter((p) => p.date === date);
+  const dl = (S.daily || []).find((x) => x.date === date);
   const parts = [];
+  if (dl && (dl.steps || dl.activeKcal)) parts.push(`<h3 class="mini-h">活動（Apple Watch）</h3><div class="rec-list">${row({ ic: 'walk', title: dl.steps ? `${fmtNum(dl.steps)}歩` : '歩数なし', sub: 'ヘルスケアから取り込み', right: dl.activeKcal ? `${fmtNum(dl.activeKcal)}<small>kcal</small>` : '', color: 'var(--blue)' })}</div>`);
   if (ws.length) parts.push(`<h3 class="mini-h">筋トレ</h3><div class="rec-list">${ws.map(workoutRow).join('')}</div>`);
   if (cs.length) parts.push(`<h3 class="mini-h">有酸素運動</h3><div class="rec-list">${cs.map(cardioRow).join('')}</div>`);
   if (ms.length) parts.push(`<h3 class="mini-h">食事</h3><div class="rec-list">${ms.map(mealRow).join('')}</div>`);

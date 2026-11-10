@@ -53,6 +53,8 @@ export function cardioKcal(kind, minutes, km, weightKg, settings = S.settings) {
 }
 
 export function cardioRecordKcal(c) {
+  // Apple Watchなどで測ったカロリーがあればそれを使う
+  if (c.kcal) return round1(Number(c.kcal));
   return cardioKcal(c.kind, c.minutes, c.distanceKm, bodyWeightAt(c.date));
 }
 
