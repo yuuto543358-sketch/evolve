@@ -86,3 +86,25 @@ export function bmr(profile, weight) {
   if (profile.sex === 'female') return Math.round(base - 161);
   return Math.round(base - 78);
 }
+
+/**
+ * 1日のカロリー収支（すべて目安）
+ * 消費 = 基礎代謝などの「普段の消費」＋ 運動・活動での消費
+ *  - Apple Watchのアクティブカロリーがある日：基礎代謝 ＋ アクティブカロリー
+ *  - ない日：基礎代謝×1.4（普段の生活ぶん）＋ 記録した運動の推定カロリー
+ */
+export function dayEnergy(date) {
+  const intake = S.meals.filter((m) => m.date === date).reduce((t, m) => t + (Number(m.kcal) || 0), 0);
+  const hasIntake = S.meals.some((m) => m.date === date && Number(m.kcal) > 0);
+  const dl = (S.daily || []).find((x) => x.date === date && x.activeKcal);
+  const exercise = S.workouts.filter((w) => w.date === date).reduce((t, w) => t + workoutKcal(w), 0)
+    + S.cardio.filter((c) => c.date === date).reduce((t, c) => t + cardioRecordKcal(c), 0);
+  const active = dl ? Number(dl.activeKcal) : exercise;
+  const b = bmr(S.profile, bodyWeightAt(date));
+  const base = b ? Math.round(dl ? b : b * 1.4) : null;
+  const burned = base !== null ? Math.round(base + active) : null;
+  return {
+    intake: Math.round(intake), hasIntake, active: Math.round(active), fromWatch: !!dl, base, burned,
+    balance: burned !== null && hasIntake ? Math.round(intake - burned) : null,
+  };
+}

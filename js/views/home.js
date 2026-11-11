@@ -10,7 +10,7 @@ import { openDaySheet, unitLabel } from '../records.js';
 import { notify } from '../app.js';
 import { openHealthImport } from '../health.js';
 import { todayPlan, planExercises, openPlanSheet } from '../plan.js';
-import { cardioKind } from '../calc.js';
+import { cardioKind, dayEnergy } from '../calc.js';
 import { today, addDays, fmtNum, fmtDate, greeting, esc, parseYmd, ymd, pad, diffDays, relDay, byDateDesc } from '../util.js';
 
 let calMonth = null;
@@ -33,6 +33,7 @@ export function render(root, app) {
       right: `<a class="avatar" href="#profile" aria-label="プロフィール">${logoMark(26, g.stage.index)}<span class="avatar-lv num">${g.level}</span></a>`,
     })}
     ${levelCard(g)}
+    ${energyCard(p)}
     ${activityCard()}
     ${secH('今日のおすすめ', planChip())}
     ${recommendCard(g, p)}
@@ -103,6 +104,46 @@ function levelCard(g) {
       ${miniBars(vals, { labels, color: 'rgba(255,255,255,.55)', empty: 'rgba(255,255,255,.14)', highlight: 6, hiColor: '#E7C77E', labelColor: 'rgba(255,255,255,.6)', height: 50 })}
     </div>
   </section>`;
+}
+
+/** 今日のカロリー収支とタンパク質 */
+function energyCard(p) {
+  const t = today();
+  const e = dayEnergy(t);
+  const goal = p.proteinGoal || 100;
+  const pr = proteinOf(S.meals.filter((m) => m.date === t));
+  const remain = Math.max(0, Math.ceil(goal - pr.total));
+  const sign = e.balance === null ? '' : e.balance > 0 ? '+' : e.balance < 0 ? '−' : '±';
+  const max = Math.max(e.intake, e.burned || 0, 1);
+  const msg = e.balance === null
+    ? (e.burned === null ? 'プロフィールに年齢・身長を入れると、消費カロリーの目安が出ます。' : '食事のカロリーを記録すると、収支が出ます（記録は任意です）。')
+    : e.balance <= -100 ? '消費のほうが多い日。脂肪を落としたいときのペースです。'
+      : e.balance >= 100 ? '摂取のほうが多い日。筋肉を育てる材料になります。'
+        : '摂取と消費がほぼ同じ。体重をキープするバランスです。';
+  return `
+  ${secH('今日の栄養とカロリー', '<a class="sec-link" href="#nutrition">くわしく' + icon('right', 14) + '</a>')}
+  <a class="card energy" href="#nutrition">
+    <div class="en-top">
+      <div class="en-ring">
+        ${ring(pr.total / goal, { size: 96, stroke: 10, grad: pr.total >= goal ? ['#E3C989', '#C99B47'] : ['#3BB39E', '#1F8070'] })}
+        <div class="en-ring-c"><strong class="num" ${countAttr('home-pr', Math.round(pr.total))}>${fmtNum(pr.total, 0)}</strong><span>/${goal}g</span></div>
+      </div>
+      <div class="en-pr">
+        <p class="en-label">タンパク質</p>
+        <p class="en-remain ${remain ? '' : 'met'}">${remain ? `あと <b class="num">${remain}</b>g` : '目標達成！'}</p>
+        <p class="en-sub">食事 ${fmtNum(pr.food, 0)}g ・ プロテイン ${fmtNum(pr.shake, 0)}g</p>
+      </div>
+    </div>
+    <div class="en-rows">
+      <div class="en-row"><span class="en-name"><i style="background:var(--gold)"></i>摂取</span><span class="en-bar"><i style="width:${(e.intake / max * 100).toFixed(1)}%;background:linear-gradient(90deg,#E3C989,#C99B47)"></i></span><b class="num">${e.hasIntake ? fmtNum(e.intake) : '—'}<small>kcal</small></b></div>
+      <div class="en-row"><span class="en-name"><i style="background:var(--amber)"></i>消費</span><span class="en-bar"><i style="width:${((e.burned || 0) / max * 100).toFixed(1)}%;background:linear-gradient(90deg,#EDA57F,#D9774B)"></i></span><b class="num">${e.burned !== null ? fmtNum(e.burned) : '—'}<small>kcal</small></b></div>
+    </div>
+    <div class="en-balance">
+      <span>収支<small>（摂取 − 消費）</small></span>
+      <b class="num">${e.balance === null ? '—' : `${sign}${fmtNum(Math.abs(e.balance))}`}<small>kcal</small></b>
+    </div>
+    <p class="fine">${msg}${e.burned !== null ? ` 消費は目安です（${e.fromWatch ? '基礎代謝＋Apple Watchの活動' : '基礎代謝など＋記録した運動'} ${fmtNum(e.active)}kcal）。` : ''}</p>
+  </a>`;
 }
 
 /** Apple Watch（ヘルスケア）から取り込んだ今日の活動 */
