@@ -24,6 +24,8 @@ export function render(root, app) {
   const meals = S.meals.filter((m) => m.date === date);
   const pr = proteinOf(meals);
   const remain = Math.max(0, goal - pr.total);
+  const fatLimit = (S.profile && S.profile.fatLimit) || 60;
+  const fatLeft = fatLimit - pr.fat;
   const shakes = meals.filter((m) => m.slot === 'protein');
   const per = S.settings.proteinPerShake || 20;
 
@@ -59,6 +61,16 @@ export function render(root, app) {
         ${icon('cup', 20)}プロテインを飲んだ<span class="btn-sub">+${per}g</span>
       </button>
       ${shakes.length ? `<p class="hint center">${date === today() ? '今日' : 'この日'}は ${shakes.length}杯 記録済み ・ <button type="button" class="link" data-edit="meals" data-id="${shakes.sort(byDateDesc)[0].id}">最後の1杯を修正</button></p>` : ''}
+    </section>
+
+    <section class="card fat-card ${fatLeft < 0 ? 'over' : ''}">
+      <div class="fat-head">
+        <span class="fat-ic">${icon('drop', 18)}</span>
+        <div class="fat-title"><strong>脂質</strong><small>上限の目安 ${fatLimit}g</small></div>
+        <p class="fat-val num"><b ${countAttr('fat-' + date, Math.round(pr.fat))}>${fmtNum(pr.fat, 0)}</b><small>/${fatLimit}g</small></p>
+      </div>
+      <div class="fat-bar"><i style="width:${Math.min(100, (pr.fat / fatLimit) * 100).toFixed(1)}%"></i></div>
+      <p class="fat-msg">${pr.fat === 0 ? '脂質を記録すると、ここに合計が出ます（記録は任意です）。' : fatLeft >= 0 ? `上限まで <b>あと ${fmtNum(fatLeft, 0)}g</b>。いいバランスです。` : `目安を <b>${fmtNum(-fatLeft, 0)}g</b> 超えました。そんな日もあります。明日すこし控えめにすれば大丈夫。`}</p>
     </section>
 
     ${secH(`${date === today() ? '今日' : fmtDateLong(date)}の食事`)}
@@ -100,7 +112,7 @@ export function render(root, app) {
     if (same) {
       const src = S.meals.find((m) => m.id === same.dataset.same);
       if (!src) return;
-      const rec = await store.saveRecord('meals', { date, slot: src.slot, content: src.content, protein: src.protein, kcal: src.kcal });
+      const rec = await store.saveRecord('meals', { date, slot: src.slot, content: src.content, protein: src.protein, fat: src.fat || null, kcal: src.kcal });
       await notify({
         message: `${SLOT_LABEL[src.slot]}を記録しました`,
         undo: { label: '取り消す', onClick: async () => { await store.deleteRecord('meals', rec.id); await notify({ message: '取り消しました', silentXP: true }); } },
@@ -130,7 +142,7 @@ function slotHTML(slot, items) {
     ${items.length ? `<div class="slot-items">${items.sort((a, b) => a.createdAt - b.createdAt).map((m) => `
       <button type="button" class="slot-item" data-edit="meals" data-id="${m.id}">
         <span>${esc(m.content) || 'タンパク質のみ'}</span>
-        <small>${fmtNum(m.protein || 0, 0)}g${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}</small>
+        <small>P ${fmtNum(m.protein || 0, 0)}g${m.fat ? ` ・ 脂質 ${fmtNum(m.fat, 0)}g` : ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}</small>
       </button>`).join('')}</div>` : ''}
     ${prev ? `<button type="button" class="slot-same" data-same="${prev.id}">${icon('route', 14)}前回と同じ：${esc(prev.content || 'タンパク質のみ')}（${fmtNum(prev.protein || 0, 0)}g）</button>` : ''}
   </div>`;

@@ -977,3 +977,33 @@ body.viewer-open #tabbar { opacity: 0; pointer-events: none; }
 .guide .steps { margin-bottom: 6px; }
 .sub-steps { margin: 6px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
 .code-box { margin: 8px 0 0; background: #1F2524; color: #E9F4F1; border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.7; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+
+/* ---------- 今日の予定 ---------- */
+.plan-chip { border: 0; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; padding: 6px 10px; border-radius: 999px; background: var(--tone-bg); color: var(--tone); transition: transform .15s var(--ease); }
+.plan-chip.unset { background: var(--primary); color: #fff; }
+.plan-chip:active { transform: scale(.94); }
+.plan-ic { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--tone-bg); color: var(--tone); flex-shrink: 0; }
+.plan-row { min-height: 60px; }
+.plan-row + .plan-row::before { left: 64px; }
+.plan-row .g-label strong { font-size: 15px; font-weight: 700; }
+.plan-check { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: transparent; box-shadow: inset 0 0 0 1.5px var(--sep); transition: all .15s; flex-shrink: 0; }
+.plan-row.on .plan-check { background: var(--primary); color: #fff; box-shadow: none; }
+.reco.has-menu { align-items: flex-start; }
+.reco.has-menu .pill-btn { margin-top: 4px; }
+.reco-menu { list-style: none; margin: 4px 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.reco-menu li { font-size: 11.5px; font-weight: 700; color: var(--tone); background: var(--tone-bg); padding: 2px 8px; border-radius: 7px; }
+
+/* ---------- 脂質 ---------- */
+.fat-card { gap: 10px; }
+.fat-head { display: flex; align-items: center; gap: 12px; }
+.fat-ic { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; background: #FBEAE0; color: var(--amber); flex-shrink: 0; }
+.fat-title { flex: 1; display: flex; flex-direction: column; }
+.fat-title strong { font-size: 15px; }
+.fat-title small { font-size: 11.5px; color: var(--ink-3); }
+.fat-val { font-size: 26px; font-weight: 700; line-height: 1; }
+.fat-val small { font-size: 12px; color: var(--ink-3); font-weight: 600; }
+.fat-bar { height: 8px; border-radius: 99px; background: var(--fill); overflow: hidden; }
+.fat-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #EDA57F, #D9774B); transition: width .6s var(--ease); }
+.fat-card.over .fat-bar i { background: linear-gradient(90deg, #D9774B, #B8914A); }
+.fat-msg { font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
+.fat-msg b { color: var(--amber); }

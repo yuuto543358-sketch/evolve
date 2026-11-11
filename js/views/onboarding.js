@@ -6,7 +6,7 @@ import { stepper, chips, num, toast } from '../ui.js';
 import { today, esc } from '../util.js';
 
 export function renderOnboarding(root, done) {
-  const data = { age: 25, height: 170, weight: 65, bodyFat: null, sex: '', proteinGoal: 100, goal: 'hosomacho' };
+  const data = { age: 25, height: 170, weight: 65, bodyFat: null, sex: '', proteinGoal: 100, fatLimit: 60, goal: 'hosomacho' };
   let step = 0;
 
   const steps = [
@@ -39,10 +39,12 @@ export function renderOnboarding(root, done) {
       <div class="ob-actions"><button type="button" class="btn btn-ghost" data-back>戻る</button><button type="button" class="btn btn-primary" data-next>次へ</button></div>`,
     () => `
       <p class="ob-step">STEP 2 / 3</p>
-      <h2 class="ob-h">タンパク質の目標</h2>
+      <h2 class="ob-h">栄養の目安</h2>
       <p class="muted">身体づくりで一番大切にしたい栄養素です。まずは1日100gがおすすめ。細かいカロリー計算は必要ありません。</p>
       <div class="field"><span class="field-label">1日の目標</span>${stepper('proteinGoal', data.proteinGoal, { step: 5, min: 30, max: 300, unit: 'g' })}
       ${chips('proteinGoal', [60, 80, 100, 120, 140], data.proteinGoal, { labels: ['60g', '80g', '100g', '120g', '140g'] })}</div>
+      <div class="field"><span class="field-label">脂質の上限 <em>1日の目安・記録は任意</em></span>${stepper('fatLimit', data.fatLimit, { step: 5, min: 20, max: 200, unit: 'g' })}
+      ${chips('fatLimit', [40, 50, 60, 70, 80], data.fatLimit, { labels: ['40g', '50g', '60g', '70g', '80g'] })}</div>
       <div class="ob-actions"><button type="button" class="btn btn-ghost" data-back>戻る</button><button type="button" class="btn btn-primary" data-next>次へ</button></div>`,
     () => `
       <p class="ob-step">STEP 3 / 3</p>
@@ -59,7 +61,7 @@ export function renderOnboarding(root, done) {
 
   function collect() {
     const f = root.querySelector('.ob-form');
-    for (const k of ['age', 'height', 'weight', 'bodyFat', 'proteinGoal']) {
+    for (const k of ['age', 'height', 'weight', 'bodyFat', 'proteinGoal', 'fatLimit']) {
       if (f.querySelector(`[name="${k}"]`)) data[k] = num(f, k);
     }
     const sex = f.querySelector('[name="sex"]');
@@ -87,7 +89,7 @@ export function renderOnboarding(root, done) {
       btn.disabled = true;
       await store.setProfile({
         age: data.age, height: data.height, weight: data.weight, bodyFat: data.bodyFat,
-        sex: data.sex, proteinGoal: data.proteinGoal || 100, goal: data.goal, goalNote: '',
+        sex: data.sex, proteinGoal: data.proteinGoal || 100, fatLimit: data.fatLimit || 60, goal: data.goal, goalNote: '',
         onboarded: true, startDate: today(), createdAt: Date.now(),
       });
       // 最初の体重を「はじまりの記録」として保存

@@ -6,6 +6,8 @@ import { computeGame, ACHIEVEMENTS } from './game.js';
 import { icon } from './icons.js';
 import { installGlobalHandlers, toast, celebrateLevelUp, celebrateAchievement, confirmDialog, animateUI } from './ui.js';
 import { openQuickAdd } from './quick.js';
+import { maybeAskPlan } from './plan.js';
+import { today } from './util.js';
 import * as home from './views/home.js';
 import * as training from './views/training.js';
 import * as nutrition from './views/nutrition.js';
@@ -161,6 +163,14 @@ async function startApp() {
   const { id, p } = parseHash();
   current = id; params = p;
   render();
+  // 毎日はじめて開いたときに、今日の予定を聞く
+  let shownDate = today();
+  setTimeout(() => maybeAskPlan({ onPicked: () => refresh() }), 700);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (shownDate !== today()) { shownDate = today(); refresh(); }
+    setTimeout(() => maybeAskPlan({ onPicked: () => refresh() }), 400);
+  });
   window.addEventListener('hashchange', () => {
     const r = parseHash();
     current = r.id; params = r.p;

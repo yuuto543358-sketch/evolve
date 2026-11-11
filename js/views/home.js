@@ -9,6 +9,8 @@ import { largeTitle, secH, countAttr } from '../ui.js';
 import { openDaySheet, unitLabel } from '../records.js';
 import { notify } from '../app.js';
 import { openHealthImport } from '../health.js';
+import { todayPlan, planExercises, openPlanSheet } from '../plan.js';
+import { cardioKind } from '../calc.js';
 import { today, addDays, fmtNum, fmtDate, greeting, esc, parseYmd, ymd, pad, diffDays, relDay, byDateDesc } from '../util.js';
 
 let calMonth = null;
@@ -32,7 +34,7 @@ export function render(root, app) {
     })}
     ${levelCard(g)}
     ${activityCard()}
-    ${secH('今日のおすすめ')}
+    ${secH('今日のおすすめ', planChip())}
     ${recommendCard(g, p)}
     ${secH('ステータス', '<span class="sec-note">今週の伸び</span>')}
     ${statusCard(g, prevWeek)}
@@ -49,6 +51,7 @@ export function render(root, app) {
     if (nav) { app.go(nav.dataset.go, nav.dataset.params ? JSON.parse(nav.dataset.params) : {}); return; }
     if (e.target.closest('[data-shake]')) { await addShake(); return; }
     if (e.target.closest('[data-health]')) { openHealthImport(); return; }
+    if (e.target.closest('[data-plan]')) { openPlanSheet({ onPicked: () => app.refresh() }); return; }
     const cm = e.target.closest('[data-cal]');
     if (cm) {
       const d = parseYmd(calMonth + '-01');
@@ -133,6 +136,12 @@ function activityCard() {
   </section>`;
 }
 
+/** 「今日のおすすめ」の横に出す、今日の予定 */
+function planChip() {
+  const plan = todayPlan();
+  return `<button type="button" class="plan-chip ${plan ? 'tone-' + plan.tone : 'unset'}" data-plan>${icon(plan ? plan.ic : 'calendar', 14)}<span>${plan ? plan.label : '今日の予定を選ぶ'}</span>${icon('down', 12)}</button>`;
+}
+
 function lastDateOf(arr, fn = () => true) {
   let d = null;
   for (const r of arr) if (fn(r) && (!d || r.date > d)) d = r.date;
@@ -146,7 +155,35 @@ function recommendCard(g, p) {
   const lastStr = lastDateOf(S.workouts);
   const lastCar = lastDateOf(S.cardio);
 
-  if (exercisedToday) {
+  const plan = todayPlan();
+  const strengthToday = S.workouts.some((w) => w.date === t);
+  const cardioToday = S.cardio.some((c) => c.date === t);
+  if (plan) {
+    // 今日の予定に合わせたおすすめ
+    const items = planExercises(plan);
+    if (plan.id === 'rest') {
+      recs.push({ ic: 'moon', tone: 'sage', rest: true, title: plan.title, sub: plan.note });
+    } else if (strengthToday) {
+      recs.push({ ic: 'dumbbell', tone: 'green', done: true, title: '今日の筋トレ、おつかれさまでした', sub: 'ストレッチとしっかりした睡眠で、身体の回復も成長のうち。' });
+    } else if (items.length) {
+      recs.push({
+        ic: plan.ic, tone: plan.tone, title: plan.title, sub: plan.note,
+        menu: items.map((x) => `${x.ex.name} ${x.reps}${unitLabel(x.ex.unit)}×${x.sets}`),
+        btn: 'はじめる', go: 'training', params: { mode: 'strength', add: items.map((x) => x.ex.id).join(','), ...(plan.sets ? { sets: plan.sets } : {}) },
+      });
+    }
+    if (plan.cardio) {
+      const k = cardioKind(plan.cardio.kind);
+      if (cardioToday) {
+        if (!plan.cardio.optional) recs.push({ ic: k.icon, tone: 'blue', done: true, title: '今日の有酸素、おつかれさまでした', sub: '持久力がまた少し育ちました。' });
+      } else {
+        recs.push({
+          ic: k.icon, tone: 'blue', title: `${k.name} ${plan.cardio.minutes}分${plan.cardio.optional ? '（気が向いたら）' : ''}`, sub: plan.cardio.note,
+          btn: '記録する', go: 'training', params: { mode: 'cardio', kind: plan.cardio.kind, minutes: plan.cardio.minutes },
+        });
+      }
+    }
+  } else if (exercisedToday) {
     recs.push({ ic: 'dumbbell', tone: 'green', done: true, title: '今日の運動、おつかれさまでした', sub: 'ストレッチとしっかりした睡眠で、身体の回復も成長のうち。' });
   } else if (!lastStr || diffDays(t, lastStr) >= 2) {
     // しばらく鍛えていない部位から提案
@@ -203,10 +240,10 @@ function recommendCard(g, p) {
 
   return `
   <section class="card list-card">
-    ${recs.slice(0, 3).map((r) => `
-      <div class="reco ${r.done ? 'done' : ''} tone-${r.tone || 'green'}">
+    ${recs.slice(0, 4).map((r) => `
+      <div class="reco ${r.done ? 'done' : ''} ${r.menu ? 'has-menu' : ''} tone-${r.tone || 'green'}">
         <span class="reco-ic">${icon(r.ic, 19)}</span>
-        <div class="reco-main"><strong>${esc(r.title)}</strong><span>${esc(r.sub)}</span></div>
+        <div class="reco-main"><strong>${esc(r.title)}</strong>${r.menu ? `<ul class="reco-menu">${r.menu.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}<span>${esc(r.sub)}</span></div>
         ${r.shake ? `<button type="button" class="pill-btn gold" data-shake>${icon('plus', 13)}${S.settings.proteinPerShake}g</button>` : ''}
         ${r.btn ? `<button type="button" class="pill-btn" data-go="${r.go}" data-params='${JSON.stringify(r.params)}'>${r.btn}</button>` : ''}
         ${r.done ? `<span class="reco-done">${icon('check', 16)}</span>` : ''}

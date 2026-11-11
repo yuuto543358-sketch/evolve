@@ -58,7 +58,7 @@ export function cardioRow(c) {
   return row({ ic: k.icon, title: c.label ? esc(c.label) : k.name, sub: `${cardioText(c)}${c.source === 'health' ? ' ・ <span class="src-tag">Apple Watch</span>' : ''}`, right: `${fmtNum(cardioRecordKcal(c))}<small>kcal</small>`, attrs: `data-edit="cardio" data-id="${c.id}"`, edit: { store: 'cardio', id: c.id }, color: 'var(--blue)' });
 }
 export function mealRow(m) {
-  return row({ ic: SLOT_ICON[m.slot] || 'meal', title: m.slot === 'protein' ? 'プロテイン' : (esc(m.content) || SLOT_LABEL[m.slot]), sub: `${SLOT_LABEL[m.slot] || ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}`, right: `${fmtNum(m.protein || 0, 1)}<small>g</small>`, attrs: `data-edit="meals" data-id="${m.id}"`, edit: { store: 'meals', id: m.id }, color: 'var(--gold-deep)' });
+  return row({ ic: SLOT_ICON[m.slot] || 'meal', title: m.slot === 'protein' ? 'プロテイン' : (esc(m.content) || SLOT_LABEL[m.slot]), sub: `${SLOT_LABEL[m.slot] || ''}${m.fat ? ` ・ 脂質${fmtNum(m.fat, 1)}g` : ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}`, right: `${fmtNum(m.protein || 0, 1)}<small>g</small>`, attrs: `data-edit="meals" data-id="${m.id}"`, edit: { store: 'meals', id: m.id }, color: 'var(--gold-deep)' });
 }
 export function bodyRow(b) {
   const parts = bodyText(b).split(' ・ ');
@@ -202,20 +202,24 @@ function recentMeals(slot) {
 
 export function mealEditor({ rec = null, slot = 'breakfast', date = today() } = {}) {
   const isNew = !rec;
-  const m = rec || { slot, date, content: '', protein: null, kcal: null };
+  const m = rec || { slot, date, content: '', protein: null, fat: null, kcal: null };
   const isShake = m.slot === 'protein';
   const recents = isNew ? recentMeals(m.slot) : [];
   openSheet({
     title: isNew ? `${SLOT_LABEL[m.slot]}を記録` : (isShake ? 'プロテイン' : `${SLOT_LABEL[m.slot]}の記録`),
     html: `<form class="form" onsubmit="return false">
       ${recents.length ? `<div class="field"><span class="field-label">最近の食事からワンタップ</span>
-        <div class="suggest">${recents.map((r) => `<button type="button" class="suggest-chip" data-fill="${r.id}"><span>${esc(r.content)}</span><small>${fmtNum(r.protein || 0, 1)}g</small></button>`).join('')}</div></div>` : ''}
+        <div class="suggest">${recents.map((r) => `<button type="button" class="suggest-chip" data-fill="${r.id}"><span>${esc(r.content)}</span><small>P${fmtNum(r.protein || 0, 1)}${r.fat ? ` F${fmtNum(r.fat, 1)}` : ''}</small></button>`).join('')}</div></div>` : ''}
       ${!isShake ? `<div class="field"><span class="field-label">食事内容 <em>任意</em></span>
         <input class="input" type="text" name="content" value="${esc(m.content || '')}" placeholder="例：鶏むね肉の定食" maxlength="80" enterkeyhint="done"></div>` : ''}
       <div class="field"><span class="field-label">タンパク質</span>
         ${stepper('protein', m.protein, { step: isShake ? 1 : 5, min: 0, max: 300, unit: 'g', decimals: 0, placeholder: '0' })}
         ${chips('protein', isShake ? [10, 15, 20, 25, 30] : [5, 10, 15, 20, 25, 30, 40], m.protein)}
         ${!isShake ? '<p class="hint">目安：卵1個 6g ・ 鶏むね肉100g 23g ・ 納豆1パック 7g ・ 牛乳200ml 7g ・ 魚の切り身 18g</p>' : ''}</div>
+      ${!isShake ? `<div class="field"><span class="field-label">脂質 <em>任意</em></span>
+        ${stepper('fat', m.fat, { step: 5, min: 0, max: 300, unit: 'g', decimals: 0, placeholder: '0' })}
+        ${chips('fat', [5, 10, 15, 20, 30, 40], m.fat)}
+        <p class="hint">目安：卵1個 5g ・ 鶏むね肉(皮なし)100g 2g ・ 鮭の切り身 4g ・ から揚げ3個 15g ・ ラーメン1杯 20g ・ とんかつ 35g</p></div>` : ''}
       ${!isShake ? `<div class="field"><span class="field-label">摂取カロリー <em>任意</em></span>
         ${stepper('kcal', m.kcal, { step: 50, min: 0, max: 5000, unit: 'kcal', placeholder: '0' })}</div>` : ''}
       <div class="field"><span class="field-label">日付</span>${dateField('date', m.date)}</div>
@@ -230,6 +234,7 @@ export function mealEditor({ rec = null, slot = 'breakfast', date = today() } = 
           body.querySelector('[name=content]').value = r.content || '';
           const p = body.querySelector('[name=protein]'); p.value = r.protein ?? ''; p.dispatchEvent(new Event('input', { bubbles: true }));
           const k = body.querySelector('[name=kcal]'); if (k) k.value = r.kcal ?? '';
+          const f = body.querySelector('[name=fat]'); if (f) { f.value = r.fat ?? ''; f.dispatchEvent(new Event('input', { bubbles: true })); }
           body.querySelectorAll('[data-fill]').forEach((b) => b.classList.toggle('on', b === fill));
           return;
         }
@@ -237,8 +242,9 @@ export function mealEditor({ rec = null, slot = 'breakfast', date = today() } = 
           const content = (val(body, 'content') || '').trim();
           const protein = num(body, 'protein');
           const kcal = num(body, 'kcal');
-          if (!content && !protein && !kcal) { toast('内容かタンパク質を入力してください'); return; }
-          await store.saveRecord('meals', { ...m, date: val(body, 'date') || m.date, content, protein: protein || 0, kcal: kcal || null });
+          const fat = num(body, 'fat');
+          if (!content && !protein && !kcal && !fat) { toast('内容かタンパク質を入力してください'); return; }
+          await store.saveRecord('meals', { ...m, date: val(body, 'date') || m.date, content, protein: protein || 0, fat: fat || null, kcal: kcal || null });
           close();
           await notify({ message: isNew ? `${SLOT_LABEL[m.slot]}を記録しました` : '記録を更新しました', silentXP: !isNew });
         } else if (e.target.closest('[data-del]')) {

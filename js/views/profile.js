@@ -84,6 +84,7 @@ export function render(root, app) {
       ${row({ ic: 'user', color: '#1F8070', label: '年齢・身長', value: `${p.age ?? '—'}歳・${p.height ?? '—'}cm`, act: 'profile' })}
       ${row({ ic: 'scale', color: '#6E9A63', label: '体重（最新）', value: `${Number(store.bodyWeightAt()).toFixed(1)}kg`, href: '#growth?add=body' })}
       ${row({ ic: 'leaf', color: '#B8914A', label: 'タンパク質の目標', value: `${p.proteinGoal || 100}g / 日`, act: 'profile' })}
+      ${row({ ic: 'drop', color: '#D9774B', label: '脂質の上限', value: `${p.fatLimit || 60}g / 日`, act: 'profile' })}
       ${row({ ic: 'target', color: '#3B7FA8', label: '目指す身体', value: esc(goal.name), act: 'profile' })}
     </div>
 
@@ -175,6 +176,9 @@ function editProfile(app) {
       <div class="field"><span class="field-label">性別 <em>任意・基礎代謝の目安に使用</em></span>${choice('sex', [{ value: '', label: '未設定' }, { value: 'male', label: '男性' }, { value: 'female', label: '女性' }], p.sex || '')}</div>
       <div class="field"><span class="field-label">タンパク質の目標</span>${stepper('proteinGoal', p.proteinGoal || 100, { step: 5, min: 30, max: 300, unit: 'g' })}
         ${chips('proteinGoal', [60, 80, 100, 120, 140], p.proteinGoal || 100)}</div>
+      <div class="field"><span class="field-label">脂質の上限 <em>1日の目安</em></span>${stepper('fatLimit', p.fatLimit || 60, { step: 5, min: 20, max: 200, unit: 'g' })}
+        ${chips('fatLimit', [40, 50, 60, 70, 80], p.fatLimit || 60)}
+        <p class="hint">細マッチョを目指すなら、1日50〜70gくらいが目安です。脂質は身体に必要な栄養なので、ゼロにする必要はありません。</p></div>
       <div class="field"><span class="field-label">目指す身体</span>${choice('goal', GOALS.map((x) => ({ value: x.id, label: x.name })), p.goal || 'hosomacho')}</div>
       <div class="field"><span class="field-label">目標のイメージ・ひとこと <em>任意</em></span><input class="input" type="text" name="goalNote" value="${esc(p.goalNote || '')}" maxlength="60" placeholder="例：夏までに腹筋のラインを出す"></div>
       <p class="hint">体重・体脂肪率は GROWTH の「身体測定」から記録すると、自動でここにも反映されます。</p>
@@ -185,7 +189,7 @@ function editProfile(app) {
         if (!e.target.closest('[data-save]')) return;
         await store.setProfile({
           ...p, age: num(body, 'age'), height: num(body, 'height'), sex: val(body, 'sex'),
-          proteinGoal: num(body, 'proteinGoal') || 100, goal: val(body, 'goal'), goalNote: val(body, 'goalNote').trim(),
+          proteinGoal: num(body, 'proteinGoal') || 100, fatLimit: num(body, 'fatLimit') || 60, goal: val(body, 'goal'), goalNote: val(body, 'goalNote').trim(),
         });
         close();
         await notify({ message: 'プロフィールを保存しました', silentXP: true });

@@ -144,13 +144,14 @@ function buildDays(data, asOf) {
 }
 
 export function proteinOf(meals) {
-  let food = 0; let shake = 0; let kcal = 0;
+  let food = 0; let shake = 0; let kcal = 0; let fat = 0;
   for (const m of meals) {
     if (m.slot === 'protein') shake += Number(m.protein) || 0;
     else food += Number(m.protein) || 0;
     kcal += Number(m.kcal) || 0;
+    fat += Number(m.fat) || 0;
   }
-  return { food, shake, total: food + shake, kcal };
+  return { food, shake, total: food + shake, kcal, fat };
 }
 
 /** 1日の経験値の内訳 */

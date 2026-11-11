@@ -27,9 +27,13 @@ function sortedExercises() {
   return [...S.exercises].sort((a, b) => (freq[b.id] || 0) - (freq[a.id] || 0) || (a.order ?? 0) - (b.order ?? 0)).map((e) => ({ ...e, freq: freq[e.id] || 0 }));
 }
 
-function addToCart(ex) {
+function addToCart(ex, setsOverride = null) {
   if (cart.some((c) => c.exerciseId === ex.id)) return false;
   const last = lastOf(ex.id);
+  if (setsOverride) {
+    cart.push({ key: Math.random().toString(36).slice(2), exerciseId: ex.id, reps: last ? last.reps : (ex.unit === 'sec' ? 30 : 10), sets: setsOverride, weight: last ? last.weight : null });
+    return true;
+  }
   cart.push({
     key: Math.random().toString(36).slice(2),
     exerciseId: ex.id,
@@ -45,10 +49,18 @@ export function render(root, app) {
   if (p.mode) mode = p.mode;
   if (p.date) date = p.date;
   if (p.add) {
-    const ex = exerciseById(p.add);
-    if (ex) addToCart(ex);
+    // 複数の種目をまとめて追加できる（カンマ区切り）
+    for (const id of String(p.add).split(',')) {
+      const ex = exerciseById(id);
+      if (ex) addToCart(ex, Number(p.sets) || null);
+    }
   }
   if (p.kind) { cardioDraft.kind = p.kind; cardioDraft.touched = false; }
+  if (p.minutes) {
+    const lastK = S.cardio.filter((c) => c.kind === cardioDraft.kind).sort(byDateDesc)[0];
+    cardioDraft.minutes = Number(p.minutes); cardioDraft.distanceKm = null; cardioDraft.touched = true;
+    if (lastK && lastK.minutes === cardioDraft.minutes) cardioDraft.distanceKm = lastK.distanceKm;
+  }
   if (p.manage) setTimeout(() => manageExercises(app), 60);
   app.clearParams(); // パラメータは一度だけ使う
   appRef = app;

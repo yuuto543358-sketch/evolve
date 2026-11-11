@@ -15,7 +15,7 @@ export async function seedDemo() {
   const days = 49;
   const start = addDays(today(), -days);
   await store.setProfile({
-    age: 28, height: 172, weight: 68.4, bodyFat: 19.5, sex: 'male', proteinGoal: 100,
+    age: 28, height: 172, weight: 68.4, bodyFat: 19.5, sex: 'male', proteinGoal: 100, fatLimit: 60,
     goal: 'hosomacho', goalNote: '夏までに腹筋のラインを出す', onboarded: true, startDate: start, createdAt: Date.now(), demo: true,
   });
   await store.ensureDefaultExercises();
@@ -40,11 +40,11 @@ export async function seedDemo() {
       cardio.push({ date: d, kind: run ? 'run' : 'walk', minutes: run ? 25 + Math.round(prog * 10) : 30, distanceKm: run ? Math.round((3.5 + prog * 1.5) * 10) / 10 : 2.4 });
     }
     if (r() > 0.15) {
-      meals.push({ date: d, slot: 'breakfast', content: r() > 0.5 ? '卵2個とトースト' : 'ヨーグルトとバナナ', protein: r() > 0.5 ? 15 : 8, kcal: 400 });
-      meals.push({ date: d, slot: 'lunch', content: r() > 0.5 ? '鶏むね肉の定食' : '親子丼', protein: r() > 0.5 ? 32 : 24, kcal: 700 });
-      if (r() > 0.25) meals.push({ date: d, slot: 'dinner', content: r() > 0.5 ? '焼き魚と味噌汁' : 'カレーライス', protein: r() > 0.5 ? 28 : 18, kcal: 750 });
+      meals.push({ date: d, slot: 'breakfast', content: r() > 0.5 ? '卵2個とトースト' : 'ヨーグルトとバナナ', protein: r() > 0.5 ? 15 : 8, fat: 12, kcal: 400 });
+      meals.push({ date: d, slot: 'lunch', content: r() > 0.5 ? '鶏むね肉の定食' : '親子丼', protein: r() > 0.5 ? 32 : 24, fat: 18, kcal: 700 });
+      if (r() > 0.25) meals.push({ date: d, slot: 'dinner', content: r() > 0.5 ? '焼き魚と味噌汁' : 'カレーライス', protein: r() > 0.5 ? 28 : 18, fat: r() > 0.5 ? 14 : 24, kcal: 750 });
       if (r() > 0.4) meals.push({ date: d, slot: 'protein', content: 'プロテイン', protein: 20 });
-      if (r() > 0.7) meals.push({ date: d, slot: 'snack', content: 'ナッツ', protein: 5, kcal: 180 });
+      if (r() > 0.7) meals.push({ date: d, slot: 'snack', content: 'ナッツ', protein: 5, fat: 14, kcal: 180 });
     }
     if (i % 7 === 0 || i === days) {
       body.push({ date: d, weight: Math.round((68.4 - prog * 1.4 + (r() - 0.5) * 0.6) * 10) / 10, bodyFat: Math.round((19.5 - prog * 1.8 + (r() - 0.5) * 0.4) * 10) / 10, muscle: Math.round((52.6 + prog * 0.5) * 10) / 10, waist: Math.round((81 - prog * 2.2) * 2) / 2 });
