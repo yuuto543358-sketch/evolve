@@ -321,7 +321,10 @@ function analyze(result, force = false) {
   const deleted = (w) => skip.cardio.some((x) => x.key === w.key || near(x, w));
   const dailyById = new Map((S.daily || []).map((d) => [d.id, d]));
   // 自分で修正・削除した日の歩数は、取り込みで上書きしない
-  const newDaily = result.daily.filter((d) => { const ex = dailyById.get(`d-${d.date}`); return !skip.daily.includes(d.date) && (force || !(ex && ex.edited)); });
+  // ショートカットの貼り付けは「この日の記録を入れたい」という操作なので、
+  // 歩数・体重については、前に修正・削除していても取り込む（ワークアウトは消したものを復活させない）
+  const direct = result.source === 'shortcut';
+  const newDaily = result.daily.filter((d) => { const ex = dailyById.get(`d-${d.date}`); return direct || (!skip.daily.includes(d.date) && (force || !(ex && ex.edited))); });
   const healthKeys = new Set(S.cardio.filter((c) => c.healthKey).map((c) => c.healthKey));
   const imported = S.cardio.filter((c) => c.source === 'health');
   // 書き出しファイルとショートカットの両方で同じワークアウトが届いても二重にしない
@@ -334,7 +337,8 @@ function analyze(result, force = false) {
     return true;
   });
   const bodyByDate = new Map(S.body.map((b) => [b.date, b]));
-  const newBody = result.body.filter((b) => { const ex = bodyByDate.get(b.date); return !skip.body.includes(b.date) && (!ex || (ex.source === 'health' && (force || !ex.edited))); });
+  const newBody = result.body.filter((b) => { const ex = bodyByDate.get(b.date); if (direct) return !ex || ex.source === 'health'; // 手入力の体重は守る
+    return !skip.body.includes(b.date) && (!ex || (ex.source === 'health' && (force || !ex.edited))); });
   return { newDaily, newWorkouts, newBody, skippedDaily: result.daily.length - newDaily.length, skippedBody: result.body.length - newBody.length, skippedWorkouts: result.workouts.length - newWorkouts.length };
 }
 
@@ -342,6 +346,14 @@ async function commit(result, opts) {
   const a = analyze(result, opts.force);
   let nDaily = 0; let nW = 0; let nB = 0;
   if (opts.force) await store.setMeta({ healthSkip: { cardio: [], body: [], daily: [] } });
+  const direct = result.source === 'shortcut';
+  if (direct && !opts.force) {
+    // 貼り付けた日の「消した印」を外す
+    const sk = { cardio: [], body: [], daily: [], ...(S.meta.healthSkip || {}) };
+    const dd = new Set(opts.daily ? a.newDaily.map((d) => d.date) : []);
+    const bd = new Set(opts.body ? a.newBody.map((b) => b.date) : []);
+    await store.setMeta({ healthSkip: { ...sk, daily: sk.daily.filter((d) => !dd.has(d)), body: sk.body.filter((d) => !bd.has(d)) } });
+  }
   if (opts.daily && a.newDaily.length) {
     const byId = new Map(S.daily.map((d) => [d.id, d]));
     const recs = a.newDaily.map((d) => {
@@ -349,8 +361,9 @@ async function commit(result, opts) {
       const ex = opts.force ? null : byId.get(id);
       return {
         ...(ex || {}), id, date: d.date, source: 'health', edited: false,
-        steps: Math.max(Number(ex && ex.steps) || 0, Number(d.steps) || 0) || null,
-        activeKcal: Math.max(Number(ex && ex.activeKcal) || 0, Number(d.activeKcal) || 0) || null,
+        // 貼り付けのときは新しい値でそのまま置きかえる（書き出しファイルのときは大きいほうを残す）
+        steps: (direct ? (d.steps ?? (ex && ex.steps)) : Math.max(Number(ex && ex.steps) || 0, Number(d.steps) || 0)) || null,
+        activeKcal: (direct ? (d.activeKcal ?? (ex && ex.activeKcal)) : Math.max(Number(ex && ex.activeKcal) || 0, Number(d.activeKcal) || 0)) || null,
       };
     });
     await store.bulkSave('daily', recs);
@@ -408,8 +421,8 @@ function previewHTML(result, label) {
       ${row('workouts', 'run', '#1F8070', `ワークアウト <b>${a.newWorkouts.length}件</b>${a.skippedWorkouts ? `<em>（取り込み済み ${a.skippedWorkouts}件）</em>` : ''}`, wSample || (result.workouts.length ? 'すべて取り込み済みです' : '見つかりませんでした'), a.newWorkouts.length)}
       ${row('body', 'scale', '#6E9A63', `体重・体脂肪率 <b>${a.newBody.length}日分</b>${a.skippedBody ? `<em>（手入力・修正した ${a.skippedBody}日は変更しません）</em>` : ''}`, lastBody ? `${fmtDate(lastBody.date, { weekday: false })}：${lastBody.weight ? lastBody.weight.toFixed(1) + 'kg' : ''}${lastBody.bodyFat ? ` ・ ${lastBody.bodyFat.toFixed(1)}%` : ''}` : '見つかりませんでした（チョコザップの体重はヘルスケアに入っていない可能性があります）', a.newBody.length)}
     </div>
-    <label class="imp-force"><input type="checkbox" name="force"><span>自分で修正・削除した記録も、ヘルスケアの内容で取り込み直す</span></label>
-    <p class="hint">同じ記録を何度取り込んでも、二重にはなりません。自分で直した記録や消した記録は、そのまま残します。歩数は1000歩ごとに2XP（1日最大20XP）になります。</p>
+    ${result.source === 'shortcut' ? '' : '<label class="imp-force"><input type="checkbox" name="force"><span>自分で修正・削除した記録も、ヘルスケアの内容で取り込み直す</span></label>'}
+    <p class="hint">同じ記録を何度取り込んでも、二重にはなりません。${result.source === 'shortcut' ? '貼り付けた日の歩数・カロリー・体重は、この内容で置きかわります。' : '自分で直した記録や消した記録は、そのまま残します。'}歩数は1000歩ごとに2XP（1日最大20XP）になります。</p>
     <button type="button" class="btn btn-primary btn-block btn-lg" data-commit ${result.recognized ? '' : 'disabled'}>${icon('download', 18)}取り込む</button>`;
 }
 

@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { uid, today } from './util.js';
 
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.6.1';
 export const SCHEMA_VERSION = 1;
 
 export const DEFAULT_SETTINGS = {
