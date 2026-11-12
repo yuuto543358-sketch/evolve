@@ -1034,3 +1034,11 @@ body.viewer-open #tabbar { opacity: 0; pointer-events: none; }
 .en-balance span { font-size: 13.5px; font-weight: 700; }
 .en-balance span small { font-size: 11px; color: var(--ink-3); font-weight: 500; margin-left: 4px; }
 .en-balance b { font-size: 22px; }
+
+/* ---------- 取り込んだ記録の修正 ---------- */
+.src-note { display: flex; gap: 8px; align-items: flex-start; background: #FBE7E5; color: #A8372E; border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.55; }
+.src-note .ic { margin-top: 1px; }
+.imp-force { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; color: var(--ink-2); padding: 2px 6px; line-height: 1.5; }
+.imp-force input { width: 18px; height: 18px; accent-color: var(--primary); flex-shrink: 0; margin-top: 1px; }
+.activity[role=button] { cursor: pointer; transition: transform .18s var(--ease); }
+.activity[role=button]:active { transform: scale(.985); }

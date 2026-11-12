@@ -6,7 +6,7 @@ import { workoutKcal, cardioRecordKcal } from '../calc.js';
 import { icon, logoMark } from '../icons.js';
 import { ring, radar, miniBars } from '../charts.js';
 import { largeTitle, secH, countAttr } from '../ui.js';
-import { openDaySheet, unitLabel } from '../records.js';
+import { openDaySheet, unitLabel, dailyEditor } from '../records.js';
 import { notify } from '../app.js';
 import { openHealthImport } from '../health.js';
 import { todayPlan, planExercises, openPlanSheet } from '../plan.js';
@@ -52,6 +52,8 @@ export function render(root, app) {
     if (nav) { app.go(nav.dataset.go, nav.dataset.params ? JSON.parse(nav.dataset.params) : {}); return; }
     if (e.target.closest('[data-shake]')) { await addShake(); return; }
     if (e.target.closest('[data-health]')) { openHealthImport(); return; }
+    const de = e.target.closest('[data-daily-edit]');
+    if (de) { dailyEditor({ date: de.dataset.dailyEdit }); return; }
     if (e.target.closest('[data-plan]')) { openPlanSheet({ onPicked: () => app.refresh() }); return; }
     const cm = e.target.closest('[data-cal]');
     if (cm) {
@@ -160,7 +162,7 @@ function activityCard() {
   const labels = days.map((d) => ['日', '月', '火', '水', '木', '金', '土'][parseYmd(d).getDay()]);
   return `
   ${secH(cur.date === t ? '今日の活動' : '最近の活動', '<button type="button" class="sec-link" data-health>' + icon('download', 14) + '取り込む</button>')}
-  <section class="card activity">
+  <section class="card activity" data-daily-edit="${cur.date}" role="button">
     <div class="act-top">
       <div class="act-ring">
         ${ring(steps / goal, { size: 104, stroke: 10, grad: ['#5AA9D6', '#3B7FA8'], track: 'rgba(59,127,168,.12)' })}
@@ -173,7 +175,7 @@ function activityCard() {
       </div>
     </div>
     ${miniBars(vals, { labels, color: '#3B7FA8', highlight: vals.length - 1, hiColor: '#5AA9D6', height: 54, goal })}
-    <p class="fine">Apple Watch・iPhoneの「ヘルスケア」から取り込んだ記録です${S.meta.lastHealthImport ? `（最後の取り込み：${new Date(S.meta.lastHealthImport).getMonth() + 1}/${new Date(S.meta.lastHealthImport).getDate()}）` : ''}。</p>
+    <p class="fine">タップすると歩数・カロリーを修正できます。Apple Watch・iPhoneの「ヘルスケア」から取り込んだ記録です${S.meta.lastHealthImport ? `（最後の取り込み：${new Date(S.meta.lastHealthImport).getMonth() + 1}/${new Date(S.meta.lastHealthImport).getDate()}）` : ''}。</p>
   </section>`;
 }
 

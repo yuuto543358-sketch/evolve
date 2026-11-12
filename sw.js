@@ -1,6 +1,6 @@
 // EVOLVE Service Worker：オフラインでも開けるようにアプリ本体を保存します
 // アプリを更新したら VERSION の数字を上げてください（古いキャッシュは自動で削除されます）
-const VERSION = 'evolve-v1.5.0';
+const VERSION = 'evolve-v1.6.0';
 
 const APP_SHELL = [
   './',

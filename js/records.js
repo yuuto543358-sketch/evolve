@@ -44,7 +44,7 @@ export function row({ ic, title, sub = '', right = '', attrs = '', color = '', e
   return `<div class="swipe"><button type="button" class="swipe-del" data-store="${edit.store}" data-id="${edit.id}" aria-label="削除">${icon('trash', 18)}<span>削除</span></button>${inner}</div>`;
 }
 
-const DELETE_LABEL = { workouts: '筋トレの記録を削除しました', cardio: '有酸素運動の記録を削除しました', meals: '食事の記録を削除しました', body: '身体測定の記録を削除しました' };
+const DELETE_LABEL = { workouts: '筋トレの記録を削除しました', cardio: '有酸素運動の記録を削除しました', meals: '食事の記録を削除しました', body: '身体測定の記録を削除しました', daily: '歩数・活動の記録を削除しました' };
 onSwipeDelete(async (storeName, id) => {
   const rec = S[storeName] && S[storeName].find((r) => r.id === id);
   if (rec) await removeWithUndo(storeName, rec, DELETE_LABEL[storeName] || '削除しました');
@@ -79,17 +79,38 @@ export function handleEditClick(e) {
   else if (st === 'cardio') editCardio(rec);
   else if (st === 'meals') mealEditor({ rec });
   else if (st === 'body') bodyEditor({ rec });
+  else if (st === 'daily') dailyEditor({ rec });
   return true;
+}
+
+/**
+ * ヘルスケアから取り込んだ記録を消したとき、次の取り込みで復活しないように覚えておく
+ * meta.healthSkip = { cardio: [{key,date,kind,label,minutes}], body: [日付], daily: [日付] }
+ */
+async function rememberSkip(storeName, rec, on) {
+  if (rec.source !== 'health' || !['cardio', 'body', 'daily'].includes(storeName)) return;
+  const skip = { cardio: [], body: [], daily: [], ...(S.meta.healthSkip || {}) };
+  if (storeName === 'cardio') {
+    skip.cardio = skip.cardio.filter((x) => x.key !== rec.healthKey);
+    if (on) skip.cardio.push({ key: rec.healthKey, date: rec.date, kind: rec.kind, label: rec.label || '', minutes: rec.minutes || 0 });
+    skip.cardio = skip.cardio.slice(-500);
+  } else {
+    skip[storeName] = skip[storeName].filter((d) => d !== rec.date);
+    if (on) skip[storeName].push(rec.date);
+    skip[storeName] = skip[storeName].slice(-1000);
+  }
+  await store.setMeta({ healthSkip: skip });
 }
 
 /** 削除して「取り消す」を表示 */
 export async function removeWithUndo(storeName, rec, label = '削除しました') {
   await store.deleteRecord(storeName, rec.id);
+  await rememberSkip(storeName, rec, true);
   await notify({ type: 'delete', silentXP: true });
   toast(label, {
     action: {
       label: '取り消す',
-      onClick: async () => { await store.saveRecord(storeName, rec); await notify({ message: '元に戻しました', silentXP: true }); },
+      onClick: async () => { await store.saveRecord(storeName, rec); await rememberSkip(storeName, rec, false); await notify({ message: '元に戻しました', silentXP: true }); },
     },
   });
 }
@@ -162,20 +183,36 @@ export function updateCardioEstimate(root) {
     : `${icon('info', 16)}<span>時間か距離を入れると、消費カロリーを自動で計算します</span>`;
 }
 
+/** ヘルスケアから取り込んだ記録につける説明 */
+function healthNote(rec) {
+  if (rec.source !== 'health') return '';
+  return `<div class="src-note">${icon('heart', 15)}<span>${rec.edited ? 'ヘルスケアから取り込んで、あなたが修正した記録です。' : 'ヘルスケア（Apple Watch）から取り込んだ記録です。'}ここで直した内容は、次に取り込んでも上書きされません。</span></div>`;
+}
+
 export function editCardio(c) {
   openSheet({
-    title: cardioKind(c.kind).name,
-    html: `<form class="form" onsubmit="return false">${cardioFormHTML(c)}
+    title: c.label ? esc(c.label) : cardioKind(c.kind).name,
+    html: `<form class="form" onsubmit="return false">${healthNote(c)}${cardioFormHTML(c)}
+      <div class="field"><span class="field-label">名前 <em>任意・「その他」のとき表示</em></span>
+        <input class="input" type="text" name="label" value="${esc(c.label || '')}" maxlength="20" placeholder="例：筋トレ・ヨガ・水泳"></div>
+      <div class="field"><span class="field-label">消費カロリー <em>任意・空欄なら自動で計算</em></span>
+        ${stepper('kcal', c.kcal, { step: 10, min: 0, max: 5000, unit: 'kcal', placeholder: '' })}
+        ${c.kcal ? '<button type="button" class="link" data-auto-kcal>自動計算にもどす</button>' : ''}</div>
       <div class="sheet-actions">${deleteButton()}<button type="button" class="btn btn-primary" data-save>保存する</button></div></form>`,
     onMount(body, close) {
       updateCardioEstimate(body);
       body.oninput = () => updateCardioEstimate(body);
       body.onchange = () => updateCardioEstimate(body);
       body.onclick = async (e) => {
+        if (e.target.closest('[data-auto-kcal]')) { body.querySelector('[name=kcal]').value = ''; toast('保存すると、時間と距離から自動で計算します', { icon: 'info' }); return; }
         if (e.target.closest('[data-save]')) {
           const minutes = num(body, 'minutes'); const km = num(body, 'distanceKm');
           if (!minutes && !km) { toast('時間か距離を入力してください'); return; }
-          await store.saveRecord('cardio', { ...c, date: val(body, 'date') || c.date, kind: val(body, 'kind'), minutes: minutes || null, distanceKm: km || null });
+          await store.saveRecord('cardio', {
+            ...c, date: val(body, 'date') || c.date, kind: val(body, 'kind'), minutes: minutes || null, distanceKm: km || null,
+            label: val(body, 'label').trim() || null, kcal: num(body, 'kcal') || null,
+            ...(c.source === 'health' ? { edited: true } : {}),
+          });
           close();
           await notify({ message: '記録を更新しました', silentXP: true });
         } else if (e.target.closest('[data-del]')) {
@@ -184,6 +221,55 @@ export function editCardio(c) {
         }
       };
     },
+  });
+}
+
+/* ---------- 歩数・活動（1日ごと） ---------- */
+export function dailyEditor({ rec = null, date = today() } = {}) {
+  if (!rec) rec = (S.daily || []).find((x) => x.date === date) || null;
+  const isNew = !rec;
+  const d = rec || { id: `d-${date}`, date, steps: null, activeKcal: null, source: 'manual' };
+  openSheet({
+    title: isNew ? '歩数・活動を記録' : '歩数・活動の修正',
+    subtitle: fmtDateLong(d.date),
+    html: `<form class="form" onsubmit="return false">${healthNote(d)}
+      <div class="field"><span class="field-label">歩数</span>
+        ${stepper('steps', d.steps, { step: 500, min: 0, max: 100000, unit: '歩', placeholder: '0' })}
+        ${chips('steps', [3000, 5000, 8000, 10000], d.steps, { labels: ['3千', '5千', '8千', '1万'] })}</div>
+      <div class="field"><span class="field-label">アクティブカロリー <em>任意</em></span>
+        ${stepper('activeKcal', d.activeKcal, { step: 10, min: 0, max: 5000, unit: 'kcal', placeholder: '' })}
+        <p class="hint">歩いたり動いたりして使ったカロリーです。Apple Watchの「ムーブ」の数字と同じものです。空欄にすると、記録した運動から計算します。</p></div>
+      ${isNew ? `<div class="field"><span class="field-label">日付</span>${dateField('date', d.date)}</div>` : ''}
+      <div class="sheet-actions">${isNew ? '<span></span>' : deleteButton()}<button type="button" class="btn btn-primary" data-save>${isNew ? '記録する' : '保存する'}</button></div>
+    </form>`,
+    onMount(body, close) {
+      body.onclick = async (e) => {
+        if (e.target.closest('[data-save]')) {
+          const steps = num(body, 'steps'); const kcal = num(body, 'activeKcal');
+          if (!steps && !kcal) { toast('歩数かカロリーを入力してください'); return; }
+          const dt = isNew ? (val(body, 'date') || d.date) : d.date;
+          const ex = (S.daily || []).find((x) => x.date === dt);
+          await store.saveRecord('daily', {
+            ...(ex || d), id: `d-${dt}`, date: dt, steps: steps || null, activeKcal: kcal || null,
+            source: (ex || d).source || 'manual', edited: true,
+          });
+          close();
+          await notify({ message: isNew ? '歩数・活動を記録しました' : '記録を更新しました', silentXP: !isNew });
+        } else if (e.target.closest('[data-del]')) {
+          close();
+          await removeWithUndo('daily', d, '歩数・活動の記録を削除しました');
+        }
+      };
+    },
+  });
+}
+
+export function dailyRow(dl) {
+  return row({
+    ic: 'walk', title: dl.steps ? `${fmtNum(dl.steps)}歩` : '歩数なし',
+    sub: `${dl.source === 'health' ? '<span class="src-tag">ヘルスケア</span>' : '手入力'}${dl.edited && dl.source === 'health' ? ' ・ 修正済み' : ''}`,
+    right: dl.activeKcal ? `${fmtNum(dl.activeKcal)}<small>kcal</small>` : '',
+    attrs: `data-edit="daily" data-id="${dl.id}"`, edit: { store: 'daily', id: dl.id }, color: 'var(--blue)',
   });
 }
 
@@ -271,7 +357,7 @@ export function bodyEditor({ rec = null, date = today() } = {}) {
   openSheet({
     title: isNew ? '身体測定を記録' : '身体測定の記録',
     html: `<form class="form" onsubmit="return false">
-      ${isNew ? '<p class="hint top">前回の値が入っています。変わったところだけ調整してください。測っていない項目は空欄でOK。</p>' : ''}
+      ${isNew ? '<p class="hint top">前回の値が入っています。変わったところだけ調整してください。測っていない項目は空欄でOK。</p>' : healthNote(b)}
       <div class="field"><span class="field-label">体重</span>${stepper('weight', b.weight, { step: 0.1, min: 20, max: 250, unit: 'kg', decimals: 1, placeholder: '65.0' })}</div>
       <div class="field"><span class="field-label">体脂肪率 <em>任意</em></span>${stepper('bodyFat', b.bodyFat, { step: 0.1, min: 2, max: 60, unit: '%', decimals: 1, placeholder: '' })}</div>
       <div class="field"><span class="field-label">筋肉量 <em>任意</em></span>${stepper('muscle', b.muscle, { step: 0.1, min: 5, max: 120, unit: 'kg', decimals: 1, placeholder: '' })}</div>
@@ -282,7 +368,7 @@ export function bodyEditor({ rec = null, date = today() } = {}) {
     onMount(body, close) {
       body.onclick = async (e) => {
         if (e.target.closest('[data-save]')) {
-          const rec2 = { ...b, date: val(body, 'date') || b.date, weight: num(body, 'weight'), bodyFat: num(body, 'bodyFat'), muscle: num(body, 'muscle'), waist: num(body, 'waist') };
+          const rec2 = { ...b, date: val(body, 'date') || b.date, weight: num(body, 'weight'), bodyFat: num(body, 'bodyFat'), muscle: num(body, 'muscle'), waist: num(body, 'waist'), ...(b.source === 'health' ? { edited: true, note: 'ヘルスケアから（修正済み）' } : {}) };
           if (!rec2.weight && !rec2.bodyFat && !rec2.muscle && !rec2.waist) { toast('どれか1つ入力してください'); return; }
           await store.saveRecord('body', rec2);
           close();
@@ -305,7 +391,7 @@ export function dayRecordsHTML(date) {
   const ps = S.photos.filter((p) => p.date === date);
   const dl = (S.daily || []).find((x) => x.date === date);
   const parts = [];
-  if (dl && (dl.steps || dl.activeKcal)) parts.push(`<h3 class="mini-h">活動（Apple Watch）</h3><div class="rec-list">${row({ ic: 'walk', title: dl.steps ? `${fmtNum(dl.steps)}歩` : '歩数なし', sub: 'ヘルスケアから取り込み', right: dl.activeKcal ? `${fmtNum(dl.activeKcal)}<small>kcal</small>` : '', color: 'var(--blue)' })}</div>`);
+  if (dl && (dl.steps || dl.activeKcal)) parts.push(`<h3 class="mini-h">歩数・活動</h3><div class="rec-list">${dailyRow(dl)}</div>`);
   if (ws.length) parts.push(`<h3 class="mini-h">筋トレ</h3><div class="rec-list">${ws.map(workoutRow).join('')}</div>`);
   if (cs.length) parts.push(`<h3 class="mini-h">有酸素運動</h3><div class="rec-list">${cs.map(cardioRow).join('')}</div>`);
   if (ms.length) parts.push(`<h3 class="mini-h">食事</h3><div class="rec-list">${ms.map(mealRow).join('')}</div>`);
@@ -328,10 +414,12 @@ export function openDaySheet(date, game) {
         <a class="quick" href="#training?date=${date}&mode=cardio" data-close>${icon('run', 20)}<span>有酸素</span></a>
         <a class="quick" href="#nutrition?date=${date}" data-close>${icon('meal', 20)}<span>食事</span></a>
         <button type="button" class="quick" data-body>${icon('scale', 20)}<span>測定</span></button>
-      </div>`,
+      </div>
+      <button type="button" class="text-btn" data-daily>${icon('walk', 15)}この日の歩数・活動を${(S.daily || []).some((x) => x.date === date) ? '修正する' : '入力する'}</button>`,
     onMount(body, close) {
       body.addEventListener('click', (e) => {
         if (e.target.closest('[data-body]')) { close(); bodyEditor({ date }); return; }
+        if (e.target.closest('[data-daily]')) { close(); dailyEditor({ date }); return; }
         if (e.target.closest('[data-edit]')) { close(); handleEditClick(e); }
       });
     },

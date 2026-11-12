@@ -3,7 +3,7 @@ import * as store from '../store.js';
 import { S } from '../store.js';
 import { icon } from '../icons.js';
 import { lineChart, bindCharts, sparkline } from '../charts.js';
-import { segmented, openSheet, toast, confirmDialog, choice, largeTitle, secH } from '../ui.js';
+import { segmented, openSheet, toast, confirmDialog, choice, largeTitle, secH, dateField } from '../ui.js';
 import { POSES, poseName, photosOf, fullUrl, forgetUrl, savePhotoFile, photoForRange, openPhotoViewer, filmstripHTML, weightNear } from '../photos.js';
 import { openCamera } from '../camera.js';
 import { bodyEditor, bodyRow, handleEditClick, removeWithUndo, emptyState } from '../records.js';
@@ -317,12 +317,26 @@ async function openPhoto(id, app) {
     wide: true,
     html: `<div class="photo-view"><img src="${meta.thumb}" alt="" data-big></div>
       <div class="field"><span class="field-label">ポーズ</span>${choice('editPose', POSES, meta.pose)}</div>
+      <div class="field"><span class="field-label">撮影した日</span>${dateField('editDate', meta.date)}</div>
       <div class="sheet-actions"><button type="button" class="btn btn-text-danger" data-del>${icon('trash', 16)}削除する</button><button type="button" class="btn btn-primary" data-close>閉じる</button></div>`,
     async onMount(body, close) {
       const u = await fullUrl(id);
       if (u) body.querySelector('[data-big]').src = u;
       body.addEventListener('change', async (e) => {
+        if (e.target.name === 'editDate' && e.target.value) {
+          const cur = S.photos.find((p) => p.id === id) || meta;
+          await store.saveRecord('photos', { ...cur, date: e.target.value }, { silent: true });
+          await notify({ message: '撮影した日を変更しました', silentXP: true });
+          return;
+        }
         if (e.target.name === 'editPose') {
+          const cur = S.photos.find((p) => p.id === id) || meta;
+          await store.saveRecord('photos', { ...cur, pose: e.target.value }, { silent: true });
+          toast('ポーズを変更しました');
+          app.refresh();
+          return;
+        }
+        if (e.target.name === '__never') {
           await store.saveRecord('photos', { ...meta, pose: e.target.value }, { silent: true });
           toast('ポーズを変更しました');
           app.refresh();

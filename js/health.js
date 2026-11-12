@@ -315,7 +315,13 @@ function countBytes(stream, total, onProgress) {
 }
 
 /* ---------- 取り込みの確認と保存 ---------- */
-function analyze(result) {
+function analyze(result, force = false) {
+  const skip = force ? { cardio: [], body: [], daily: [] } : { cardio: [], body: [], daily: [], ...(S.meta.healthSkip || {}) };
+  const near = (c, w) => c.date === w.date && c.kind === w.kind && (c.label || '') === (w.label || '') && Math.abs((Number(c.minutes) || 0) - (Number(w.minutes) || 0)) <= 3;
+  const deleted = (w) => skip.cardio.some((x) => x.key === w.key || near(x, w));
+  const dailyById = new Map((S.daily || []).map((d) => [d.id, d]));
+  // 自分で修正・削除した日の歩数は、取り込みで上書きしない
+  const newDaily = result.daily.filter((d) => { const ex = dailyById.get(`d-${d.date}`); return !skip.daily.includes(d.date) && (force || !(ex && ex.edited)); });
   const healthKeys = new Set(S.cardio.filter((c) => c.healthKey).map((c) => c.healthKey));
   const imported = S.cardio.filter((c) => c.source === 'health');
   // 書き出しファイルとショートカットの両方で同じワークアウトが届いても二重にしない
@@ -323,25 +329,26 @@ function analyze(result) {
     && Math.abs((Number(c.minutes) || 0) - (Number(w.minutes) || 0)) <= 3);
   const seen = new Set();
   const newWorkouts = result.workouts.filter((w) => {
-    if (healthKeys.has(w.key) || seen.has(w.key) || similar(w)) return false;
+    if (healthKeys.has(w.key) || seen.has(w.key) || similar(w) || deleted(w)) return false;
     seen.add(w.key);
     return true;
   });
   const bodyByDate = new Map(S.body.map((b) => [b.date, b]));
-  const newBody = result.body.filter((b) => { const ex = bodyByDate.get(b.date); return !ex || ex.source === 'health'; });
-  return { newWorkouts, newBody, skippedBody: result.body.length - newBody.length, skippedWorkouts: result.workouts.length - newWorkouts.length };
+  const newBody = result.body.filter((b) => { const ex = bodyByDate.get(b.date); return !skip.body.includes(b.date) && (!ex || (ex.source === 'health' && (force || !ex.edited))); });
+  return { newDaily, newWorkouts, newBody, skippedDaily: result.daily.length - newDaily.length, skippedBody: result.body.length - newBody.length, skippedWorkouts: result.workouts.length - newWorkouts.length };
 }
 
 async function commit(result, opts) {
-  const a = analyze(result);
+  const a = analyze(result, opts.force);
   let nDaily = 0; let nW = 0; let nB = 0;
-  if (opts.daily && result.daily.length) {
+  if (opts.force) await store.setMeta({ healthSkip: { cardio: [], body: [], daily: [] } });
+  if (opts.daily && a.newDaily.length) {
     const byId = new Map(S.daily.map((d) => [d.id, d]));
-    const recs = result.daily.map((d) => {
+    const recs = a.newDaily.map((d) => {
       const id = `d-${d.date}`;
-      const ex = byId.get(id);
+      const ex = opts.force ? null : byId.get(id);
       return {
-        ...(ex || {}), id, date: d.date, source: 'health',
+        ...(ex || {}), id, date: d.date, source: 'health', edited: false,
         steps: Math.max(Number(ex && ex.steps) || 0, Number(d.steps) || 0) || null,
         activeKcal: Math.max(Number(ex && ex.activeKcal) || 0, Number(d.activeKcal) || 0) || null,
       };
@@ -349,18 +356,28 @@ async function commit(result, opts) {
     await store.bulkSave('daily', recs);
     nDaily = recs.length;
   }
+  if (opts.force && opts.workouts) {
+    // 修正したワークアウトを、ヘルスケアの内容にもどす
+    const byKey = new Map(result.workouts.map((w) => [w.key, w]));
+    const back = S.cardio.filter((c) => c.edited && c.healthKey && byKey.has(c.healthKey)).map((c) => {
+      const w = byKey.get(c.healthKey);
+      return { ...c, date: w.date, kind: w.kind, label: w.label || null, minutes: w.minutes || null, distanceKm: w.distanceKm || null, kcal: w.kcal || null, edited: false };
+    });
+    await store.bulkSave('cardio', back);
+    nW += back.length;
+  }
   if (opts.workouts && a.newWorkouts.length) {
     await store.bulkSave('cardio', a.newWorkouts.map((w) => ({
       date: w.date, kind: w.kind, label: w.label || null, minutes: w.minutes || null, distanceKm: w.distanceKm || null,
       kcal: w.kcal || null, source: 'health', healthKey: w.key,
     })));
-    nW = a.newWorkouts.length;
+    nW += a.newWorkouts.length;
   }
   if (opts.body && a.newBody.length) {
     const byDate = new Map(S.body.map((b) => [b.date, b]));
     await store.bulkSave('body', a.newBody.map((b) => {
       const ex = byDate.get(b.date);
-      return { ...(ex || {}), date: b.date, weight: b.weight ?? (ex && ex.weight) ?? null, bodyFat: b.bodyFat ?? (ex && ex.bodyFat) ?? null, muscle: (ex && ex.muscle) || null, waist: (ex && ex.waist) || null, source: 'health', note: 'ヘルスケアから' };
+      return { ...(ex || {}), date: b.date, weight: b.weight ?? (ex && ex.weight) ?? null, bodyFat: b.bodyFat ?? (ex && ex.bodyFat) ?? null, muscle: (ex && ex.muscle) || null, waist: (ex && ex.waist) || null, source: 'health', edited: false, note: 'ヘルスケアから' };
     }));
     nB = a.newBody.length;
   }
@@ -387,11 +404,12 @@ function previewHTML(result, label) {
   return `
     <p class="imp-label">${label}</p>
     <div class="group imp-group">
-      ${row('daily', 'walk', '#3B7FA8', `歩数・アクティブカロリー <b>${result.daily.length}日分</b>`, lastDaily ? `${fmtDate(lastDaily.date, { weekday: false })}：${lastDaily.steps !== null ? fmtNum(lastDaily.steps) + '歩' : ''}${lastDaily.activeKcal !== null ? ` ・ ${fmtNum(lastDaily.activeKcal)}kcal` : ''}` : '見つかりませんでした', result.daily.length)}
+      ${row('daily', 'walk', '#3B7FA8', `歩数・アクティブカロリー <b>${a.newDaily.length}日分</b>${a.skippedDaily ? `<em>（修正・削除した ${a.skippedDaily}日は変更しません）</em>` : ''}`, lastDaily ? `${fmtDate(lastDaily.date, { weekday: false })}：${lastDaily.steps !== null ? fmtNum(lastDaily.steps) + '歩' : ''}${lastDaily.activeKcal !== null ? ` ・ ${fmtNum(lastDaily.activeKcal)}kcal` : ''}` : '見つかりませんでした', a.newDaily.length)}
       ${row('workouts', 'run', '#1F8070', `ワークアウト <b>${a.newWorkouts.length}件</b>${a.skippedWorkouts ? `<em>（取り込み済み ${a.skippedWorkouts}件）</em>` : ''}`, wSample || (result.workouts.length ? 'すべて取り込み済みです' : '見つかりませんでした'), a.newWorkouts.length)}
-      ${row('body', 'scale', '#6E9A63', `体重・体脂肪率 <b>${a.newBody.length}日分</b>${a.skippedBody ? `<em>（手入力のある日 ${a.skippedBody}日は変更しません）</em>` : ''}`, lastBody ? `${fmtDate(lastBody.date, { weekday: false })}：${lastBody.weight ? lastBody.weight.toFixed(1) + 'kg' : ''}${lastBody.bodyFat ? ` ・ ${lastBody.bodyFat.toFixed(1)}%` : ''}` : '見つかりませんでした（チョコザップの体重はヘルスケアに入っていない可能性があります）', a.newBody.length)}
+      ${row('body', 'scale', '#6E9A63', `体重・体脂肪率 <b>${a.newBody.length}日分</b>${a.skippedBody ? `<em>（手入力・修正した ${a.skippedBody}日は変更しません）</em>` : ''}`, lastBody ? `${fmtDate(lastBody.date, { weekday: false })}：${lastBody.weight ? lastBody.weight.toFixed(1) + 'kg' : ''}${lastBody.bodyFat ? ` ・ ${lastBody.bodyFat.toFixed(1)}%` : ''}` : '見つかりませんでした（チョコザップの体重はヘルスケアに入っていない可能性があります）', a.newBody.length)}
     </div>
-    <p class="hint">同じ記録を何度取り込んでも、二重にはなりません。歩数は1000歩ごとに2XP（1日最大20XP）になります。</p>
+    <label class="imp-force"><input type="checkbox" name="force"><span>自分で修正・削除した記録も、ヘルスケアの内容で取り込み直す</span></label>
+    <p class="hint">同じ記録を何度取り込んでも、二重にはなりません。自分で直した記録や消した記録は、そのまま残します。歩数は1000歩ごとに2XP（1日最大20XP）になります。</p>
     <button type="button" class="btn btn-primary btn-block btn-lg" data-commit ${result.recognized ? '' : 'disabled'}>${icon('download', 18)}取り込む</button>`;
 }
 
@@ -450,7 +468,10 @@ export function openHealthImport() {
             daily: !!body.querySelector('[name=daily]:checked'),
             workouts: !!body.querySelector('[name=workouts]:checked'),
             body: !!body.querySelector('[name=body]:checked'),
+            force: !!body.querySelector('[name=force]:checked'),
           };
+          // 取り込み直すときは、すべての種類を対象にする
+          if (opts.force) { opts.daily = true; opts.workouts = true; opts.body = true; }
           if (parsed.source === 'shortcut') {
             const d = val(body, 'impDate') || parsed.date;
             if (d !== parsed.date) parsed = parseShortcutText(body.querySelector('[name=pasteText]').value, d);
