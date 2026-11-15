@@ -1153,3 +1153,29 @@ ul.steps { list-style: disc; }
 .src-note.ai { background: #ECE8FA; color: #4B3FA0; }
 .chat-foot .link { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
 .chat-foot span { text-align: right; }
+
+/* ---------- つながらないとき：お知らせと接続のテスト ---------- */
+.toast-msg small { display: block; font-size: 11px; font-weight: 500; opacity: .7; word-break: break-all; margin-top: 2px; }
+.chat-notice { align-self: stretch; display: flex; flex-direction: column; gap: 4px; border-radius: 16px; padding: 11px 14px; font-size: 13px; line-height: 1.55; animation: viewIn .3s var(--ease) both; }
+.chat-notice.warn { background: #FBEAE0; color: #8F3F1E; }
+.chat-notice.muted { background: var(--fill-2); color: var(--ink-2); }
+.chat-notice small { font-size: 11px; opacity: .8; word-break: break-all; -webkit-user-select: text; user-select: text; }
+.cn-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.cn-btns:empty { display: none; }
+.diag { display: flex; flex-direction: column; gap: 6px; }
+.diag[hidden] { display: none; }
+.diag-row { display: flex; gap: 10px; align-items: flex-start; background: var(--surface-2); border-radius: 14px; padding: 10px 12px; }
+.diag-row div { display: flex; flex-direction: column; min-width: 0; }
+.diag-row strong { font-size: 13.5px; }
+.diag-row span:not(.diag-mark) { font-size: 12.5px; color: var(--ink-2); }
+.diag-row small { font-size: 11px; color: var(--ink-3); word-break: break-all; -webkit-user-select: text; user-select: text; }
+.diag-mark { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff; background: var(--ink-3); flex-shrink: 0; }
+.diag-row.ok .diag-mark { background: var(--primary); }
+.diag-row.warn .diag-mark { background: var(--gold); }
+.diag-row.ng .diag-mark { background: var(--danger); }
+.diag-row.ng { background: #FBE7E5; }
+.diag-mark.spin { background: none; border: 2.5px solid var(--fill); border-top-color: var(--primary); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.diag-sum { font-size: 13px; font-weight: 700; padding: 4px 2px; }
+.diag-sum.ok { color: var(--primary-deep); }
+.diag-sum.ng { color: var(--danger); }

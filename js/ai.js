@@ -10,6 +10,7 @@ import { computeGame, proteinOf, STAT_DEFS } from './game.js';
 import { dayEnergy, cardioKind, workoutKcal, cardioRecordKcal } from './calc.js';
 import { todayPlan } from './plan.js';
 import { recordUsage } from './aicost.js';
+import { TOOLS } from './aitools.js';
 import { today, addDays, parseYmd, byDateDesc } from './util.js';
 
 const API_BASE = 'https://api.openai.com/v1';
@@ -24,16 +25,28 @@ export const DEFAULT_MODEL = 'gpt-6.1-sol';
 
 let cachedKey;
 
+/**
+ * 貼り付けたキーを整える：全角の英数字は半角に、空白・改行・見えない文字は取りのぞく。
+ * （見えない文字がまじっていると、通信そのものが失敗して「接続できません」と出てしまうため）
+ */
+export function cleanKey(k) {
+  return String(k || '').normalize('NFKC').replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '');
+}
+/** キーとして使える文字（半角の英数字・記号だけ）か */
+export function keyLooksValid(k) { return /^[\x21-\x7e]+$/.test(k); }
+
 export async function getKey() {
   if (cachedKey === undefined) {
-    cachedKey = (await db.kvGet('aiKey')) || '';
+    const saved = (await db.kvGet('aiKey')) || '';
+    cachedKey = cleanKey(saved);
     // 以前の版で入れたAnthropicのキーは使えないので、未設定あつかいにする
     if (/^sk-ant-/.test(cachedKey)) cachedKey = '';
+    if (cachedKey !== saved) await db.kvSet('aiKey', cachedKey);
   }
   return cachedKey;
 }
 export async function setKey(k) {
-  cachedKey = (k || '').trim();
+  cachedKey = cleanKey(k);
   await db.kvSet('aiKey', cachedKey);
 }
 export function hasKeySync() { return !!cachedKey; }
@@ -46,42 +59,93 @@ export function modelLabel(id = modelId()) {
   return m ? m.label : id;
 }
 
-/** わかりやすいエラー */
+/** 画面に出す文章から、キーらしい文字を隠す */
+export function scrub(t) { return String(t || '').replace(/sk-[A-Za-z0-9_\-*.]{4,}/g, 'sk-…'); }
+
+/**
+ * わかりやすいエラー
+ * status＝HTTPの番号、detail＝OpenAIが返した英語の説明（画面の「くわしく」と接続のテストで見せる）
+ */
 export class AIError extends Error {
-  constructor(message, kind) { super(message); this.kind = kind; }
+  constructor(message, kind, info = {}) {
+    super(message);
+    this.kind = kind;
+    this.status = info.status || null;
+    this.detail = scrub(info.detail || '').slice(0, 220);
+  }
+}
+
+/** いちばん最近の通信エラー（接続のテストなどで使う） */
+let lastError = null;
+export function getLastError() { return lastError; }
+function remember(e, model) { lastError = { when: Date.now(), kind: e.kind, status: e.status, detail: e.detail, model }; return e; }
+
+function networkError() {
+  return new AIError('AIに接続できませんでした。電波やWi-Fi、VPN・広告ブロックなどを確かめて、もう一度お試しください。', 'network');
 }
 
 function errorFor(status, err) {
   const code = (err && (err.code || err.type)) || '';
   const msg = (err && err.message) || '';
-  if (status === 401) return new AIError('APIキーが正しくないようです。PROFILE →「AIの設定」でキーを確認してください。', 'auth');
-  if (code === 'insufficient_quota' || /quota|billing/i.test(msg)) return new AIError('APIの残高（クレジット）が足りないようです。OpenAIのサイトの「Billing」で残高を確認してください。', 'billing');
-  if (status === 404 || code === 'model_not_found') return new AIError('選んだAIの種類（モデル）が、このキーでは使えないようです。PROFILE →「AIの設定」で別の種類を選んでください。', 'model');
-  if (status === 403) return new AIError('このAPIキーでは使えない設定のようです。OpenAIのサイトでキーの権限を確認してください。', 'permission');
-  if (status === 429) return new AIError('短い時間に使いすぎたようです。1分ほど待ってから、もう一度お試しください。', 'rate');
-  if (status >= 500) return new AIError('AIが混み合っています。少し待ってから、もう一度お試しください。', 'overloaded');
-  if (status === 413) return new AIError('送る内容が大きすぎました。写真を小さくするか、文章を短くしてお試しください。', 'too_large');
-  return new AIError(`AIに接続できませんでした（${status}）。${msg ? msg.slice(0, 140) : ''}`, 'other');
+  const info = { status, detail: msg };
+  if (status === 401) return new AIError('APIキーが正しくないようです。PROFILE →「AIの設定」でキーを確認してください。', 'auth', info);
+  if (code === 'insufficient_quota' || /quota|billing/i.test(msg)) return new AIError('APIの残高（クレジット）が足りないようです。OpenAIのサイトの「Billing」で残高を確認してください。', 'billing', info);
+  if (status === 404 || code === 'model_not_found') return new AIError('選んだAIの種類（モデル）が、このキーでは使えないようです。PROFILE →「AIの設定」で別の種類を選んでください。', 'model', info);
+  if (status === 403) return new AIError('このAPIキーでは使えない設定のようです。OpenAIのサイトでキーの権限を確認してください。', 'permission', info);
+  if (status === 429) return new AIError('短い時間に使いすぎたようです。1分ほど待ってから、もう一度お試しください。', 'rate', info);
+  if (status >= 500) return new AIError('AIが混み合っています。少し待ってから、もう一度お試しください。', 'overloaded', info);
+  if (status === 413) return new AIError('送る内容が大きすぎました。写真を小さくするか、文章を短くしてお試しください。', 'too_large', info);
+  return new AIError(`AIがうまく受け付けてくれませんでした（${status}）。`, 'other', info);
 }
 
-// モデルによって使えない指定があるので、断られたらその指定を外してやり直す
-const unsupported = new Set();
+/* ---------- AIの種類（モデル）ごとに、使えない指定を覚えておく ---------- */
+const offMap = new Map(); // モデル名 → 使えなかった指定の集まり（アプリを開き直すまで）
+const capMap = new Map(); // モデル名 → 出力の長さの上限
+const isOff = (model, key) => !!(offMap.get(model) && offMap.get(model).has(key));
+const markOff = (model, key) => { if (!offMap.has(model)) offMap.set(model, new Set()); offMap.get(model).add(key); };
+/** このAIの種類で、記録の道具（Function calling）が使えないと分かっているか */
+export function toolsOff(model = modelId()) { return isOff(model, 'tools'); }
 
-function buildBody({ system, messages, maxTokens, effort, schema, stream, tools }) {
-  const msgs = system ? [{ role: 'system', content: system }, ...messages] : messages;
-  const body = { model: modelId(), messages: msgs };
-  if (!unsupported.has('max_completion_tokens')) body.max_completion_tokens = maxTokens; else body.max_tokens = maxTokens;
-  if (effort && !unsupported.has('reasoning_effort')) body.reasoning_effort = effort;
+const NO_TOOLS_NOTE = '\n\n【重要】いまは、記録の道具が使えません。食事や運動を「記録しました」とは言わないでください。記録したいときは、アプリの＋ボタンから記録するよう、ひとこと案内してください。';
+
+/** 道具が使えないときは、会話に混じっている「道具の呼び出し」を、ふつうの文章にならす */
+function flattenTools(msgs) {
+  const out = [];
+  for (const m of msgs) {
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      out.push({ role: 'assistant', content: m.content || '（記録の操作をしました）' });
+    } else if (m.role === 'tool') {
+      let t = '';
+      try { const o = JSON.parse(m.content); t = o.summary || o.message || ''; } catch { /* そのまま */ }
+      const prev = out[out.length - 1];
+      if (t && prev && prev.role === 'assistant') out[out.length - 1] = { role: 'assistant', content: `${prev.content}\n（${t}）` };
+    } else out.push(m);
+  }
+  return out;
+}
+
+/** drop＝この通信で外す指定（'named'＝エラー文で名指しされた／'guess'＝原因が分からず試しに外した） */
+function buildBody({ system, messages, maxTokens, effort, schema, stream, tools }, drop, model) {
+  const off = (k) => drop.has(k) || isOff(model, k);
+  const wantTools = !!(tools && tools.length);
+  let sys = system;
+  if (wantTools && off('tools') && sys) sys += NO_TOOLS_NOTE;
+  const base = wantTools && off('tools') ? flattenTools(messages) : messages;
+  const body = { model, messages: sys ? [{ role: 'system', content: sys }, ...base] : base };
+  const cap = capMap.get(model);
+  const mt = cap ? Math.min(maxTokens, cap) : maxTokens;
+  if (!off('max_completion_tokens')) body.max_completion_tokens = mt; else body.max_tokens = mt;
+  if (effort && !off('reasoning_effort')) body.reasoning_effort = effort;
   if (schema) {
-    body.response_format = unsupported.has('json_schema')
+    body.response_format = off('json_schema')
       ? { type: 'json_object' }
       : { type: 'json_schema', json_schema: { name: 'result', strict: true, schema } };
   }
-  if (tools && tools.length) body.tools = tools;
+  if (wantTools && !off('tools')) body.tools = tools;
   if (stream) {
     body.stream = true;
     // 使ったトークン数を、最後に教えてもらう（料金の計算に使う）
-    if (!unsupported.has('stream_options')) body.stream_options = { include_usage: true };
+    if (!off('stream_options')) body.stream_options = { include_usage: true };
   }
   return body;
 }
@@ -89,37 +153,80 @@ function buildBody({ system, messages, maxTokens, effort, schema, stream, tools 
 async function authHeaders() {
   const key = await getKey();
   if (!key) throw new AIError('APIキーがまだ設定されていません。', 'nokey');
+  if (!keyLooksValid(key)) throw new AIError('APIキーに、使えない文字がまじっているようです。PROFILE →「AIの設定」で、キーをコピーし直して貼り付けてください。', 'auth');
   if (!navigator.onLine) throw new AIError('インターネットにつながっていません。つながってから、もう一度お試しください。', 'offline');
   return { 'content-type': 'application/json', authorization: `Bearer ${key}` };
 }
 
-/** @returns {Promise<{res: Response, model: string, chars: number}>} chars＝送った文字数（料金の推定に使う） */
-async function post(opts, signal, attempt = 0) {
-  const headers = await authHeaders();
-  const body = buildBody(opts);
-  const text = JSON.stringify(body);
-  let res;
-  try {
-    res = await fetch(`${API_BASE}/chat/completions`, { method: 'POST', headers, body: text, signal });
-  } catch (e) {
-    if (e && e.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
-    throw new AIError('AIに接続できませんでした。通信の状態を確認して、もう一度お試しください。', 'network');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const abortedError = () => new AIError('中止しました。', 'aborted');
+
+const present = (key, body) => ({
+  stream_options: 'stream_options' in body, tools: 'tools' in body, reasoning_effort: 'reasoning_effort' in body,
+  json_schema: !!body.response_format, max_completion_tokens: 'max_completion_tokens' in body,
+})[key];
+
+/**
+ * 「リクエストが受け付けられなかった（400）」ときに、原因の指定を外す／上限を下げる。何か変えたら true
+ * （使えない指定は、モデルによってちがうため。アプリが新しい指定を足しても、つながらなくならないようにする）
+ */
+function fixRequest(err, body, model, drop) {
+  const m = `${err.param || ''} ${err.code || ''} ${err.message || ''}`;
+  const sent = body.max_completion_tokens || body.max_tokens || 0;
+  const cap = m.match(/(?:at most|maximum(?: value)?(?: is| of)?|up to|limit(?: is| of)?)\D{0,30}?(\d{3,6})/i);
+  if (/max_tokens|max_completion_tokens/.test(m) && cap && Number(cap[1]) < sent) { capMap.set(model, Number(cap[1])); return true; }
+  const named = [
+    ['stream_options', /stream_options|include_usage/],
+    ['reasoning_effort', /reasoning_effort/],
+    ['max_completion_tokens', /max_completion_tokens/],
+    ['json_schema', /response_format|json_schema/],
+    ['tools', /\btools?\b|tool_choice|tool_calls|function/i],
+  ];
+  for (const [key, re] of named) {
+    if (re.test(m) && !drop.has(key) && !isOff(model, key) && present(key, body)) { drop.set(key, 'named'); return true; }
   }
-  if (!res.ok) {
+  // 原因が分からないときは、なくても動く指定を、失っても困らないものから1つずつ外して試す
+  for (const key of ['stream_options', 'tools', 'reasoning_effort']) {
+    if (!drop.has(key) && present(key, body)) { drop.set(key, 'guess'); return true; }
+  }
+  return false;
+}
+
+/** @returns {Promise<{res: Response, model: string, chars: number}>} chars＝送った文字数（料金の推定に使う） */
+async function post(opts, signal) {
+  const headers = await authHeaders();
+  const model = modelId();
+  const drop = new Map();
+  let netTries = 0;
+  for (let attempt = 0; attempt < 9; attempt++) {
+    const body = buildBody(opts, drop, model);
+    const text = JSON.stringify(body);
+    let res;
+    try {
+      res = await fetch(`${API_BASE}/chat/completions`, { method: 'POST', headers, body: text, signal });
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw abortedError();
+      // iPhoneは、しばらく使っていなかったあとの最初の通信が失敗することがあるので、少し待って2回までやり直す
+      if (netTries < 2) {
+        netTries++;
+        await sleep(700 * netTries);
+        if (signal && signal.aborted) throw abortedError();
+        continue;
+      }
+      throw remember(networkError(), model);
+    }
+    if (res.ok) {
+      // 指定を外して成功したら、そのAIの種類では使えないと覚える（名指しされたものと、最後に外したもの）
+      const keys = [...drop.keys()];
+      keys.forEach((k, i) => { if (drop.get(k) === 'named' || i === keys.length - 1) markOff(model, k); });
+      return { res, model, chars: text.length };
+    }
     let err = null;
     try { err = (await res.json()).error; } catch { /* ignore */ }
-    if (res.status === 400 && attempt < 4 && err) {
-      const m = `${err.param || ''} ${err.message || ''}`;
-      let retry = false;
-      if (/reasoning_effort/.test(m) && !unsupported.has('reasoning_effort')) { unsupported.add('reasoning_effort'); retry = true; }
-      else if (/max_completion_tokens/.test(m) && !unsupported.has('max_completion_tokens')) { unsupported.add('max_completion_tokens'); retry = true; }
-      else if (/response_format|json_schema/.test(m) && !unsupported.has('json_schema')) { unsupported.add('json_schema'); retry = true; }
-      else if (/stream_options/.test(m) && !unsupported.has('stream_options')) { unsupported.add('stream_options'); retry = true; }
-      if (retry) return post(opts, signal, attempt + 1);
-    }
-    throw errorFor(res.status, err);
+    if (res.status === 400 && err && fixRequest(err, body, model, drop)) continue;
+    throw remember(errorFor(res.status, err), model);
   }
-  return { res, model: body.model, chars: text.length };
+  throw remember(new AIError('AIとのやりとりがうまくいきませんでした。もう一度お試しください。', 'other'), model);
 }
 
 /** 料金の記録（記録に失敗しても、AIの答えは止めない） */
@@ -272,12 +379,15 @@ export async function runChat({ system, messages, tools, toApi = (m) => m, execu
  */
 export async function testKey() {
   const headers = await authHeaders();
-  let res;
-  try { res = await fetch(`${API_BASE}/models`, { headers: { authorization: headers.authorization } }); } catch { throw new AIError('AIに接続できませんでした。通信の状態を確認して、もう一度お試しください。', 'network'); }
+  let res = null;
+  for (let i = 0; i < 3 && !res; i++) {
+    try { res = await fetch(`${API_BASE}/models`, { headers: { authorization: headers.authorization } }); } catch { if (i < 2) await sleep(700 * (i + 1)); }
+  }
+  if (!res) throw remember(networkError(), 'models');
   if (!res.ok) {
     let err = null;
     try { err = (await res.json()).error; } catch { /* ignore */ }
-    throw errorFor(res.status, err);
+    throw remember(errorFor(res.status, err), 'models');
   }
   const data = await res.json();
   const ids = ((data && data.data) || []).map((m) => m.id)
@@ -285,6 +395,106 @@ export async function testKey() {
     .sort().reverse();
   await store.setMeta({ aiModels: ids.slice(0, 60) });
   return ids;
+}
+
+/* =========================================================
+   接続のテスト：つながらないときに、どこで止まっているかを順番に調べる
+   ========================================================= */
+function friendly(status, err) {
+  const code = (err && (err.code || err.type)) || '';
+  const msg = (err && err.message) || '';
+  if (status === 401) return 'APIキーが正しくありません。';
+  if (code === 'insufficient_quota' || /quota|billing/i.test(msg)) return '残高（クレジット）が足りません。';
+  if (status === 404 || code === 'model_not_found') return 'このAIの種類は、このキーでは使えません。';
+  if (status === 403) return 'このキーでは使えない設定です（権限）。';
+  if (status === 429) return '短い時間に使いすぎです。少し待ってください。';
+  if (status >= 500) return 'OpenAI側が混み合っています。';
+  if (status === 400) return 'この指定は受け付けられませんでした（アプリは、使えない指定を自動でさけます）。';
+  return `うまくいきませんでした（${status}）。`;
+}
+
+/** 文章の返事（SSE）の中から、使用量を取り出す */
+function usageFromSSE(text) {
+  let usage = null;
+  for (const line of String(text).split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    try { const ev = JSON.parse(line.slice(5).trim()); if (ev.usage) usage = ev.usage; } catch { /* [DONE] など */ }
+  }
+  return usage;
+}
+
+/**
+ * @param {(row, rows) => void} onStep 1項目おわるたびに呼ばれる
+ * 1回ずつ「ふつうの形」で送るので、アプリが自動でさける指定も、そのまま試される。
+ * ごく少量のAIを数回使うので、1〜数円かかることがあります。
+ */
+export async function diagnose(onStep) {
+  const rows = [];
+  const add = (r) => { rows.push(r); if (onStep) onStep(r, rows); return r; };
+  const key = await getKey();
+  const model = modelId();
+  if (!key) { add({ id: 'key', label: 'APIキー', ok: false, note: 'APIキーがまだ設定されていません。' }); return rows; }
+  if (!keyLooksValid(key)) { add({ id: 'key', label: 'APIキー', ok: false, note: 'キーに、使えない文字（全角の文字など）がまじっています。コピーし直して貼り付けてください。' }); return rows; }
+  const auth = { authorization: `Bearer ${key}` };
+  const post = { method: 'POST', headers: { ...auth, 'content-type': 'application/json' } };
+  const chatUrl = `${API_BASE}/chat/completions`;
+
+  const probe = async (id, label, url, init, judge) => {
+    let res;
+    try { res = await fetch(url, init); } catch {
+      return add({ id, label, ok: false, status: 0, note: 'つながりませんでした。電波・Wi-Fi・VPN・広告ブロックなどを確かめてください。', detail: '' });
+    }
+    if (!res.ok) {
+      let err = null;
+      try { err = (await res.json()).error; } catch { /* ignore */ }
+      return add({ id, label, ok: false, status: res.status, note: friendly(res.status, err), detail: scrub((err && err.message) || '').slice(0, 220) });
+    }
+    const text = await res.text();
+    let out = {};
+    try { out = judge(text) || {}; } catch { out = { note: '返事がきました' }; }
+    if (out.usage) await track(model, 'other', out.usage, null);
+    return add({ id, label, ok: true, status: res.status, note: out.note || '問題ありません', warn: !!out.warn });
+  };
+  const ask1 = [{ role: 'user', content: '「OK」とだけ答えてください。' }];
+  const base = { model, messages: ask1, max_completion_tokens: 1500 };
+  const plain = (t) => { const d = JSON.parse(t); return { note: '返事がきました', usage: d.usage }; };
+
+  await probe('models', 'キーの確認', `${API_BASE}/models`, { headers: auth }, (t) => {
+    const ids = (JSON.parse(t).data || []).map((m) => m.id);
+    const ok = ids.includes(model);
+    return { note: `使えるAIは${ids.length}種類。選んでいる「${model}」は${ok ? '使えます' : 'このキーでは見つかりません（AIの設定で別の種類を選んでください）'}。`, warn: !ok };
+  });
+  if (!rows[0].ok) return rows; // キーか通信がだめなら、これ以上は試さない
+  await probe('chat', '文章の返事', chatUrl, { ...post, body: JSON.stringify(base) }, plain);
+  await probe('effort', '考える深さの指定', chatUrl, { ...post, body: JSON.stringify({ ...base, reasoning_effort: 'low' }) }, plain);
+  await probe('stream', '少しずつ届く返事＋使用量', chatUrl, { ...post, body: JSON.stringify({ ...base, stream: true, stream_options: { include_usage: true } }) }, (t) => {
+    const usage = usageFromSSE(t);
+    return { note: usage ? '返事も使用量も届きました' : '返事は届きましたが、使用量は届きませんでした（料金は推定になります）', usage, warn: !usage };
+  });
+  await probe('tools', '記録の道具（会話からの自動記録）', chatUrl, {
+    ...post,
+    body: JSON.stringify({ model, max_completion_tokens: 1500, tools: TOOLS, messages: [{ role: 'user', content: '昼食にラーメンを食べたことにして、record_meal を呼んでください（栄養は適当でかまいません）。' }] }),
+  }, (t) => {
+    const d = JSON.parse(t);
+    const called = d.choices && d.choices[0] && d.choices[0].finish_reason === 'tool_calls';
+    return { note: called ? '記録の道具が使えます' : '道具は受け付けられました（今回は呼ばれませんでした）', usage: d.usage };
+  });
+  await probe('all', 'アプリと同じ形（すべてまとめて）', chatUrl, {
+    ...post,
+    body: JSON.stringify({ model, max_completion_tokens: 1500, reasoning_effort: 'low', stream: true, stream_options: { include_usage: true }, tools: TOOLS, messages: ask1 }),
+  }, (t) => ({ note: '問題ありません', usage: usageFromSSE(t) }));
+  return rows;
+}
+
+/** 接続のテストの結果を、コピーして貼り付けられる文章にする（キーは入れない） */
+export function diagText(rows) {
+  const lines = [`EVOLVE 接続のテスト（v${store.APP_VERSION}）`, `AIの種類: ${modelId()}`, `日時: ${new Date().toLocaleString('ja-JP')}`];
+  rows.forEach((r, i) => {
+    lines.push(`${i + 1}. ${r.label}: ${r.ok ? (r.warn ? '注意' : 'OK') : `だめ${r.status ? `（${r.status}）` : ''}`} … ${r.note}${r.detail ? `\n   詳細: ${r.detail}` : ''}`);
+  });
+  const le = getLastError();
+  if (le) lines.push(`直前のエラー: ${le.kind}${le.status ? `（${le.status}）` : ''} ${le.detail || ''}`);
+  return lines.join('\n');
 }
 
 /* =========================================================

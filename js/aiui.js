@@ -41,7 +41,10 @@ export async function withKey(fn) {
 function showError(e) {
   if (e instanceof ai.AIError) {
     if (e.kind === 'aborted') return;
-    toast(esc(e.message), { icon: 'info', duration: 5000, action: e.kind === 'auth' || e.kind === 'nokey' ? { label: '設定', onClick: () => openAISetup() } : null });
+    const action = (e.kind === 'auth' || e.kind === 'nokey') ? { label: '設定', onClick: () => openAISetup() }
+      : (e.kind === 'network' || e.kind === 'other') ? { label: 'しらべる', onClick: () => openAISetup({ diag: true }) } : null;
+    const more = e.detail ? `<br><small>${esc(e.status ? `${e.status}：` : '')}${esc(e.detail)}</small>` : '';
+    toast(esc(e.message) + more, { icon: 'info', duration: 7000, action });
   } else {
     console.error(e);
     toast('うまくいきませんでした。もう一度お試しください。', { icon: 'info' });
@@ -49,7 +52,7 @@ function showError(e) {
 }
 
 /* ---------- キーの設定 ---------- */
-export async function openAISetup({ onReady = null } = {}) {
+export async function openAISetup({ onReady = null, diag = false } = {}) {
   const cur = await ai.getKey();
   openSheet({
     title: 'AIの設定',
@@ -65,6 +68,11 @@ export async function openAISetup({ onReady = null } = {}) {
         <div class="imp-card-h"><span class="ic-sq" style="--sq:#1F8070">${icon('bolt', 17)}</span><div><strong>使うAIの種類</strong><small>あとからいつでも変えられます</small></div></div>
         ${choice('model', modelOptions(), ai.modelId())}
         <p class="hint" data-model-desc>${modelDesc(ai.modelId())}</p>
+      </div>
+      <div class="imp-card">
+        <div class="imp-card-h"><span class="ic-sq" style="--sq:#3B7FA8">${icon('info', 17)}</span><div><strong>接続のテスト</strong><small>「AIに接続できません」と出るとき、どこで止まっているかを調べます。ごく少量のAIを数回使うので、1〜数円かかることがあります</small></div></div>
+        <button type="button" class="btn btn-soft btn-block" data-diag>${icon('check', 18)}接続をしらべる</button>
+        <div class="diag" data-diag-out hidden></div>
       </div>
       <div class="guide">
         <h3 class="mini-h">APIキーの作り方（最初に1回だけ）</h3>
@@ -86,6 +94,23 @@ export async function openAISetup({ onReady = null } = {}) {
         </ul>
       </div>`,
     onMount(body, close) {
+      const runDiag = async () => {
+        const btn = body.querySelector('[data-diag]');
+        const out = body.querySelector('[data-diag-out]');
+        out.hidden = false; out.innerHTML = '';
+        btn.disabled = true; btn.textContent = 'しらべています…';
+        const draw = (rows, running) => {
+          out.innerHTML = rows.map((r) => `<div class="diag-row ${r.ok ? (r.warn ? 'warn' : 'ok') : 'ng'}"><span class="diag-mark">${r.ok ? (r.warn ? '！' : '✓') : '✕'}</span><div><strong>${esc(r.label)}</strong><span>${esc(r.note)}</span>${r.detail ? `<small>${esc(r.status ? `${r.status}：` : '')}${esc(r.detail)}</small>` : ''}</div></div>`).join('')
+            + (running ? '<div class="diag-row run"><span class="diag-mark spin"></span><div><strong>しらべています…</strong></div></div>' : '');
+        };
+        let rows = [];
+        try { rows = await ai.diagnose((r, all) => draw(all, true)); } catch (err) { console.error(err); rows = [{ id: 'x', label: 'テスト', ok: false, note: 'テストの途中で問題が起きました。', detail: String(err && err.message) }]; }
+        draw(rows, false);
+        const bad = rows.filter((r) => !r.ok).length; const warn = rows.filter((r) => r.ok && r.warn).length;
+        out.insertAdjacentHTML('beforeend', `<p class="diag-sum ${bad ? 'ng' : 'ok'}">${bad ? `うまくいかなかった項目が${bad}つあります。` : warn ? '使えますが、注意の項目があります。' : 'すべて問題ありません。'}</p><button type="button" class="btn btn-ghost btn-block" data-diag-copy>結果をコピー</button>`);
+        out.dataset.text = ai.diagText(rows);
+        btn.disabled = false; btn.innerHTML = `${icon('check', 18)}もう一度しらべる`;
+      };
       body.addEventListener('change', async (e) => {
         if (e.target.name === 'model') {
           await store.setSettings({ aiModel: e.target.value });
@@ -93,6 +118,16 @@ export async function openAISetup({ onReady = null } = {}) {
         }
       });
       body.addEventListener('click', async (e) => {
+        if (e.target.closest('[data-diag]')) { runDiag(); return; }
+        if (e.target.closest('[data-diag-copy]')) {
+          const text = body.querySelector('[data-diag-out]').dataset.text || '';
+          try { await navigator.clipboard.writeText(text); toast('結果をコピーしました。貼り付けて見せてください', { icon: 'check' }); } catch {
+            const ta = document.createElement('textarea'); ta.className = 'input'; ta.rows = 8; ta.value = text; ta.readOnly = true;
+            body.querySelector('[data-diag-out]').appendChild(ta); ta.focus(); ta.select();
+            toast('下の文字を長押しして、コピーしてください', { icon: 'info' });
+          }
+          return;
+        }
         if (e.target.closest('[data-remove]')) {
           await ai.setKey('');
           close();
@@ -102,10 +137,11 @@ export async function openAISetup({ onReady = null } = {}) {
         }
         const btn = e.target.closest('[data-save]');
         if (!btn) return;
-        const k = val(body, 'key').trim();
+        const k = ai.cleanKey(val(body, 'key'));
         if (!k && !cur) { toast('APIキーを貼り付けてください', { icon: 'info' }); return; }
         if (k && /^sk-ant-/.test(k)) { toast('これはAnthropicのキーのようです。OpenAIのキー（sk- で始まるもの）を入れてください', { icon: 'info', duration: 5000 }); return; }
         if (k && !/^sk-/.test(k)) { toast('APIキーは「sk-」で始まります。コピーした文字を確かめてください', { icon: 'info', duration: 4500 }); return; }
+        if (k && !ai.keyLooksValid(k)) { toast('キーに、使えない文字がまじっているようです。コピーし直して貼り付けてください', { icon: 'info', duration: 5000 }); return; }
         const prev = cur;
         if (k) await ai.setKey(k);
         btn.disabled = true; btn.innerHTML = '確かめています…';
@@ -126,6 +162,7 @@ export async function openAISetup({ onReady = null } = {}) {
           showError(err);
         }
       });
+      if (diag) setTimeout(runDiag, 450);
     },
   });
 }
@@ -177,6 +214,7 @@ export function openCoach({ first = null } = {}) {
   return withKey(async () => {
     let history = sanitizeHistory((await db.kvGet('aiChat')) || []);
     let busy = false; let ctrl = null;
+    let notice = null; // 会話の最後に出す、エラーなどのお知らせ（履歴には保存しない）
     let unsub = () => {}; let detach = () => {};
     openSheet({
       title: 'AIコーチ',
@@ -203,10 +241,14 @@ export function openCoach({ first = null } = {}) {
         scroller.addEventListener('scroll', () => { stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90; }, { passive: true });
         const follow = (force = false) => { if (force) stick = true; if (stick) scroller.scrollTop = scroller.scrollHeight; };
         const resize = () => { input.style.height = 'auto'; input.style.height = `${Math.min(120, input.scrollHeight)}px`; };
+        const noticeHTML = () => {
+          if (!notice) return '';
+          return `<div class="chat-notice ${notice.tone || 'warn'}"><span class="cn-text">${esc(notice.text)}</span>${notice.detail ? `<small>${esc(notice.detail)}</small>` : ''}<span class="cn-btns">${notice.retry ? '<button type="button" class="act-btn" data-retry>もう一度送る</button>' : ''}${notice.setup ? '<button type="button" class="act-btn" data-notice-setup>AIの設定</button>' : ''}${notice.diag ? '<button type="button" class="act-btn" data-notice-diag>接続をしらべる</button>' : ''}</span></div>`;
+        };
         const draw = () => {
           const empty = history.length === 0;
           scroller.classList.toggle('is-empty', empty);
-          list.innerHTML = empty ? HELLO : history.map(renderMsg).join('');
+          list.innerHTML = (empty ? HELLO : history.map(renderMsg).join('')) + noticeHTML();
           suggest.hidden = !empty;
           follow();
         };
@@ -214,7 +256,7 @@ export function openCoach({ first = null } = {}) {
         const send = async (raw) => {
           const text = (raw || '').trim();
           if (!text || busy) return;
-          busy = true;
+          busy = true; notice = null;
           input.value = ''; resize();
           history.push({ role: 'user', content: text });
           const before = history.length;
@@ -253,10 +295,23 @@ export function openCoach({ first = null } = {}) {
           } catch (err) {
             if (holder) holder.remove();
             // 何も記録されていないときは、入力した文章をもどす（記録されたものがあるときは会話に残す）
-            if (history.length === before) { history.pop(); input.value = text; resize(); }
-            showError(err);
+            const nothing = history.length === before;
+            if (nothing) { history.pop(); input.value = text; resize(); }
+            if (err instanceof ai.AIError) {
+              if (err.kind !== 'aborted') {
+                notice = {
+                  tone: 'warn', text: err.message,
+                  detail: err.detail ? `${err.status ? `${err.status}：` : ''}${err.detail}` : (err.status ? `エラー番号 ${err.status}` : ''),
+                  retry: nothing ? text : null, setup: err.kind === 'auth' || err.kind === 'nokey', diag: err.kind === 'network' || err.kind === 'other',
+                };
+              }
+            } else {
+              console.error(err);
+              notice = { tone: 'warn', text: 'うまくいきませんでした。もう一度お試しください。', retry: nothing ? text : null };
+            }
           } finally {
             busy = false; ctrl = null;
+            if (!notice && ai.toolsOff()) notice = { tone: 'muted', text: 'このAIの種類では、会話からの自動記録が使えませんでした。記録は、画面下の＋ボタンからお願いします（AIの設定で、別の種類にすると使えることがあります）。', setup: true };
             history = trimHistory(history);
             try { await db.kvSet('aiChat', history); } catch { /* 保存できなくても続ける */ }
             if (list.isConnected) draw();
@@ -267,6 +322,9 @@ export function openCoach({ first = null } = {}) {
         body.addEventListener('click', async (e) => {
           const sg = e.target.closest('[data-s]');
           if (sg) { send(sg.dataset.s); return; }
+          if (e.target.closest('[data-retry]')) { const t = notice && notice.retry; if (t) send(t); return; }
+          if (e.target.closest('[data-notice-setup]')) { openAISetup(); return; }
+          if (e.target.closest('[data-notice-diag]')) { openAISetup({ diag: true }); return; }
           if (e.target.closest('[data-send]')) { send(input.value); return; }
           if (e.target.closest('[data-clear]')) {
             if (busy) return;
