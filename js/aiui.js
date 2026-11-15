@@ -311,7 +311,12 @@ export function openCoach({ first = null } = {}) {
             }
           } finally {
             busy = false; ctrl = null;
-            if (!notice && ai.toolsOff()) notice = { tone: 'muted', text: 'このAIの種類では、会話からの自動記録が使えませんでした。記録は、画面下の＋ボタンからお願いします（AIの設定で、別の種類にすると使えることがあります）。', setup: true };
+            if (!notice && ai.toolsOff()) {
+              notice = {
+                tone: 'muted', setup: true, diag: true, detail: ai.toolsWhy(),
+                text: 'いまは、会話からの自動記録がうまく動きませんでした。記録は、画面下の＋ボタンからお願いします。理由は「接続をしらべる」で見られます（AIの種類を変えると動くこともあります）。',
+              };
+            }
             history = trimHistory(history);
             try { await db.kvSet('aiChat', history); } catch { /* 保存できなくても続ける */ }
             if (list.isConnected) draw();

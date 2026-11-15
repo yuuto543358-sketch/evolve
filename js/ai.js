@@ -99,12 +99,24 @@ function errorFor(status, err) {
 }
 
 /* ---------- AIの種類（モデル）ごとに、使えない指定を覚えておく ---------- */
-const offMap = new Map(); // モデル名 → 使えなかった指定の集まり（アプリを開き直すまで）
-const capMap = new Map(); // モデル名 → 出力の長さの上限
+const offMap = new Map(); // モデル名 → 使えなかった指定の集まり（アプリを開き直すまで）。'r_' で始まるものは新しい入り口（Responses）用
+const capMap = new Map(); // モデル名 → 出力の長さの上限（'r:モデル名' は新しい入り口用）
+const whyMap = new Map(); // モデル名 → { responses, chat }：道具が使えなかった理由（OpenAIが返した英語の説明）
+const pathMap = new Map(); // モデル名 → 'responses' | 'chat' | 'none'：道具を使う会話で、いちばん最近うまくいった通り道
 const isOff = (model, key) => !!(offMap.get(model) && offMap.get(model).has(key));
 const markOff = (model, key) => { if (!offMap.has(model)) offMap.set(model, new Set()); offMap.get(model).add(key); };
-/** このAIの種類で、記録の道具（Function calling）が使えないと分かっているか */
-export function toolsOff(model = modelId()) { return isOff(model, 'tools'); }
+const setWhy = (model, which, msg) => { const w = whyMap.get(model) || {}; w[which] = scrub(String(msg || '')).slice(0, 160); whyMap.set(model, w); };
+/** 前に覚えたことを忘れる（接続のテストの前に、まっさらにする） */
+function forget(model) { offMap.delete(model); capMap.delete(model); capMap.delete(`r:${model}`); whyMap.delete(model); pathMap.delete(model); }
+/** このAIの種類で、会話からの自動記録（道具）が、どちらの入り口でも使えなかったか */
+export function toolsOff(model = modelId()) { return pathMap.get(model) === 'none'; }
+/** 道具が使えなかった理由（OpenAIが返した英語の説明。画面の「くわしく」に出す） */
+export function toolsWhy(model = modelId()) {
+  const w = whyMap.get(model) || {};
+  return [w.responses && `新しい入り口：${w.responses}`, w.chat && `古い入り口：${w.chat}`].filter(Boolean).join(' / ');
+}
+/** 道具を使う会話で、いま使っている入り口（まだ試していなければ null） */
+export function toolPath(model = modelId()) { return pathMap.get(model) || null; }
 
 const NO_TOOLS_NOTE = '\n\n【重要】いまは、記録の道具が使えません。食事や運動を「記録しました」とは言わないでください。記録したいときは、アプリの＋ボタンから記録するよう、ひとこと案内してください。';
 
@@ -183,27 +195,44 @@ function fixRequest(err, body, model, drop) {
     ['tools', /\btools?\b|tool_choice|tool_calls|function/i],
   ];
   for (const [key, re] of named) {
-    if (re.test(m) && !drop.has(key) && !isOff(model, key) && present(key, body)) { drop.set(key, 'named'); return true; }
+    if (re.test(m) && !drop.has(key) && !isOff(model, key) && present(key, body)) {
+      drop.set(key, 'named');
+      if (key === 'tools') setWhy(model, 'chat', err.message);
+      return true;
+    }
   }
   // 原因が分からないときは、なくても動く指定を、失っても困らないものから1つずつ外して試す
   for (const key of ['stream_options', 'tools', 'reasoning_effort']) {
-    if (!drop.has(key) && present(key, body)) { drop.set(key, 'guess'); return true; }
+    if (!drop.has(key) && present(key, body)) {
+      drop.set(key, 'guess');
+      if (key === 'tools') setWhy(model, 'chat', err.message);
+      return true;
+    }
   }
   return false;
 }
 
-/** @returns {Promise<{res: Response, model: string, chars: number}>} chars＝送った文字数（料金の推定に使う） */
-async function post(opts, signal) {
+/** 通信が切れて、やり直しても送れなかった／OpenAIが受け付けなかった（番号つき）ことを伝える、内部のしるし */
+class NetFail extends Error {}
+class HttpFail extends Error {
+  constructor(status, err, body) { super('http'); this.status = status; this.err = err; this.body = body; }
+}
+
+/**
+ * OpenAIに送る（入り口の path は '/chat/completions' か '/responses'）。
+ * 通信が切れたら少し待って2回までやり直し、400で「この指定がだめ」と分かったら、その指定を外して送り直す。
+ * @returns {Promise<{res: Response, drop: Map, body: object, chars: number}>} chars＝送った文字数（料金の推定に使う）
+ */
+async function sendJSON(path, signal, makeBody, fix) {
   const headers = await authHeaders();
-  const model = modelId();
   const drop = new Map();
   let netTries = 0;
   for (let attempt = 0; attempt < 9; attempt++) {
-    const body = buildBody(opts, drop, model);
+    const body = makeBody(drop);
     const text = JSON.stringify(body);
     let res;
     try {
-      res = await fetch(`${API_BASE}/chat/completions`, { method: 'POST', headers, body: text, signal });
+      res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers, body: text, signal });
     } catch (e) {
       if (e && e.name === 'AbortError') throw abortedError();
       // iPhoneは、しばらく使っていなかったあとの最初の通信が失敗することがあるので、少し待って2回までやり直す
@@ -213,20 +242,140 @@ async function post(opts, signal) {
         if (signal && signal.aborted) throw abortedError();
         continue;
       }
-      throw remember(networkError(), model);
+      throw new NetFail();
     }
-    if (res.ok) {
-      // 指定を外して成功したら、そのAIの種類では使えないと覚える（名指しされたものと、最後に外したもの）
-      const keys = [...drop.keys()];
-      keys.forEach((k, i) => { if (drop.get(k) === 'named' || i === keys.length - 1) markOff(model, k); });
-      return { res, model, chars: text.length };
-    }
+    if (res.ok) return { res, drop, body, chars: text.length };
     let err = null;
     try { err = (await res.json()).error; } catch { /* ignore */ }
-    if (res.status === 400 && err && fixRequest(err, body, model, drop)) continue;
-    throw remember(errorFor(res.status, err), model);
+    if (res.status === 400 && err && fix(err, body, drop)) continue;
+    throw new HttpFail(res.status, err, body);
   }
-  throw remember(new AIError('AIとのやりとりがうまくいきませんでした。もう一度お試しください。', 'other'), model);
+  throw new HttpFail(0, null, null);
+}
+
+/** 指定を外して成功したら、そのAIの種類では使えないと覚える（名指しされたものと、最後に外したもの） */
+function learnDrops(model, drop, prefix = '') {
+  const keys = [...drop.keys()];
+  keys.forEach((k, i) => { if (drop.get(k) === 'named' || i === keys.length - 1) markOff(model, prefix + k); });
+}
+
+const stuckError = () => new AIError('AIとのやりとりがうまくいきませんでした。もう一度お試しください。', 'other');
+
+function chatFailure(e, model) {
+  if (e instanceof NetFail) return remember(networkError(), model);
+  if (e instanceof HttpFail) return remember(e.status ? errorFor(e.status, e.err) : stuckError(), model);
+  return e;
+}
+
+/** @returns {Promise<{res: Response, model: string, chars: number, tools: boolean}>} chars＝送った文字数、tools＝道具をつけて送れたか */
+async function post(opts, signal) {
+  const model = modelId();
+  try {
+    const { res, drop, body, chars } = await sendJSON('/chat/completions', signal, (d) => buildBody(opts, d, model), (err, b, d) => fixRequest(err, b, model, d));
+    learnDrops(model, drop);
+    return { res, model, chars, tools: 'tools' in body };
+  } catch (e) { throw chatFailure(e, model); }
+}
+
+/* =========================================================
+   もうひとつの入り口：Responses API（道具を使う会話は、まずこちらを使う）
+   ---------------------------------------------------------
+   新しいAI（GPT-6.1 Sol など）は、「記録の道具（Function calling）」を、
+   古い入り口（Chat Completions）では受け付けず、新しい入り口（Responses）だけで受け付けます。
+   そのため、道具を使う会話は、まず新しい入り口で送ります。
+   新しい入り口が使えないときは、これまでの入り口（Chat Completions）にもどります。
+   ========================================================= */
+
+/** 新しい入り口が使えないので、古い入り口にもどる、という内部のしるし */
+class ResponsesFallback extends Error {}
+
+/** 道具の定義を、新しい入り口の形（name などがそのまま並ぶ形）にする。オプションの項目があるので strict は使わない */
+const flatTools = (tools) => tools.map((t) => ({
+  type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters, strict: false,
+}));
+
+/**
+ * 会話の履歴（Chat Completionsの形）→ 新しい入り口の input の形。
+ * replay＝この会話のいまのやりとりの中で、AIが返してきた「考えの記録つきの返事」。道具の結果を返すときは、そのまま添えて送る。
+ */
+function toResponsesInput(messages, replay) {
+  const out = [];
+  for (const m of messages) {
+    if (m.role === 'user') out.push({ role: 'user', content: m.content });
+    else if (m.role === 'assistant') {
+      const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+      const raw = replay && calls.length ? replay.get(calls[0].id) : null;
+      if (raw) { out.push(...raw); continue; }
+      if (m.content) out.push({ role: 'assistant', content: m.content });
+      for (const c of calls) out.push({ type: 'function_call', call_id: c.id, name: c.function.name, arguments: c.function.arguments || '{}' });
+    } else if (m.role === 'tool') out.push({ type: 'function_call_output', call_id: m.tool_call_id, output: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
+  }
+  return out;
+}
+
+/** drop＝この通信で外す指定（'named'＝エラー文で名指しされた／'guess'＝原因が分からず試しに外した） */
+function buildResponsesBody({ system, messages, tools, noTools, replay, maxTokens, effort }, drop, model) {
+  const off = (k) => drop.has(k) || isOff(model, `r_${k}`);
+  // store:false＝OpenAIの側に会話を残さない。include＝考えの記録（暗号化）を受け取って、道具の結果を返すときに添える
+  const body = { model, store: false, stream: true, input: toResponsesInput(messages, off('include') ? null : replay) };
+  if (system) body.instructions = system;
+  const cap = capMap.get(`r:${model}`);
+  body.max_output_tokens = cap ? Math.min(maxTokens, cap) : maxTokens;
+  if (effort && !off('reasoning')) body.reasoning = { effort };
+  if (!off('include')) body.include = ['reasoning.encrypted_content'];
+  body.tools = flatTools(tools);
+  body.tool_choice = noTools ? 'none' : 'auto';
+  return body;
+}
+
+const CAP_RE = /(?:at most|maximum(?: value)?(?: is| of)?|up to|limit(?: is| of)?)\D{0,30}?(\d{3,6})/i;
+
+/** 新しい入り口で「受け付けられなかった（400）」ときの、直し方（fixRequest の新しい入り口版）。何か変えたら true */
+function fixResponsesRequest(err, body, model, drop) {
+  const m = `${err.param || ''} ${err.code || ''} ${err.message || ''}`;
+  const cap = m.match(CAP_RE);
+  if (/max_output_tokens/.test(m) && cap && Number(cap[1]) < (body.max_output_tokens || 0)) { capMap.set(`r:${model}`, Number(cap[1])); return true; }
+  // 道具の呼び出しと「考えの記録」の組み合わせがおかしい → 考えの記録はやめて、道具の呼び出しだけを送る
+  if (/reasoning['"]?\s+item|without its required|encrypted_content|\binclude\b/i.test(m) && 'include' in body && !drop.has('include')) { drop.set('include', 'named'); return true; }
+  if (/reasoning/i.test(m) && 'reasoning' in body && !drop.has('reasoning')) { drop.set('reasoning', 'named'); return true; }
+  // 新しい入り口でも道具が受け付けられない → 古い入り口にもどる（この種類では、新しい入り口を道具には使わない）
+  if (/\btools?\b|tool_choice|function/i.test(m)) { markOff(model, 'r_tools'); setWhy(model, 'responses', err.message); return false; }
+  for (const key of ['include', 'reasoning']) {
+    if (!drop.has(key) && key in body) { drop.set(key, 'guess'); return true; }
+  }
+  return false;
+}
+
+function responsesFailure(e, model) {
+  if (e instanceof NetFail) return remember(networkError(), model);
+  if (e instanceof HttpFail) {
+    const { status, err } = e;
+    const code = (err && (err.code || err.type)) || '';
+    const msg = (err && err.message) || `HTTP ${status}`;
+    // この入り口そのものが使えない／このキーでは許可されていない → 古い入り口にもどる（この種類では、もう新しい入り口を使わない）
+    if ((status === 404 && code !== 'model_not_found') || status === 403) { markOff(model, 'r_api'); setWhy(model, 'responses', msg); return new ResponsesFallback(); }
+    // 直せなかった400は、今回だけ古い入り口で試す（原因が会話の中身かもしれないので、覚えはしない）
+    if (status === 400 && err) { setWhy(model, 'responses', msg); return new ResponsesFallback(); }
+    return remember(status ? errorFor(status, err) : stuckError(), model);
+  }
+  return e;
+}
+
+/** 新しい入り口の返事の中の使用量 → 料金の計算で使う形（Chat Completionsと同じ名前）にそろえる */
+function respUsage(u) {
+  if (!u || typeof u !== 'object') return null;
+  return {
+    prompt_tokens: u.input_tokens, completion_tokens: u.output_tokens,
+    prompt_tokens_details: { cached_tokens: (u.input_tokens_details && u.input_tokens_details.cached_tokens) || 0 },
+  };
+}
+
+/** 流れの途中で届いたエラー（response.failed / error）を、わかりやすいエラーにする */
+function streamFailure(info) {
+  const code = (info && (info.code || info.type)) || '';
+  if (/rate_limit/.test(code)) return errorFor(429, info);
+  if (/server_error|overloaded|unavailable|timeout/.test(code)) return errorFor(500, info);
+  return errorFor(/quota/.test(code) ? 429 : 400, info);
 }
 
 /** 料金の記録（記録に失敗しても、AIの答えは止めない） */
@@ -262,14 +411,43 @@ export async function askJSON(opts) {
   }
 }
 
-/**
- * 1回ぶんのやりとり。文字が少しずつ届く形で受け取り、AIが「道具を使いたい」と言ったときはその依頼も集める
- * @returns {Promise<{text: string, toolCalls: {id, name, arguments}[], finish: string|null}>}
- */
-async function streamRound({ system, messages, tools = null, maxTokens = 16000, effort = 'medium', onText, signal = null, tag = 'coach' }) {
-  const { res, model, chars } = await post({ system, messages, tools, maxTokens, effort, stream: true }, signal);
+/** 少しずつ届く返事（SSE）を1行ずつ読んで、「data:」のあとの中身を handle に渡す */
+async function readSSE(res, handle) {
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = ''; let full = ''; let finish = null; let refusal = ''; let usage = null;
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).replace(/\r$/, '');
+      buf = buf.slice(i + 1);
+      if (line.startsWith('data:')) handle(line.slice(5).trim());
+    }
+  }
+  if (buf.startsWith('data:')) handle(buf.slice(5).trim());
+}
+
+/** 1回ぶんの通信の後始末：料金を記録し、途中で切れていたらエラーにする（最後まで届かなかったときも、使った分は文字数からの推定で記録する） */
+async function closeRound({ model, tag, usage, chars, outChars, failure }) {
+  await track(model, tag, usage, { i: chars / 2, o: outChars / 1.3 });
+  if (!failure) return;
+  if (failure instanceof AIError) throw failure;
+  if (failure && failure.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
+  throw new AIError('通信が途中で切れました。もう一度お試しください。', 'network');
+}
+
+/**
+ * 1回ぶんのやりとり（これまでの入り口：Chat Completions）。
+ * 文字が少しずつ届く形で受け取り、AIが「道具を使いたい」と言ったときはその依頼も集める
+ * @returns {Promise<{text: string, toolCalls: {id, name, arguments}[], finish: string|null, items: null}>}
+ */
+async function streamRoundChat({ system, messages, tools = null, noTools = false, maxTokens = 16000, effort = 'medium', onText, signal = null, tag = 'coach' }) {
+  const wantTools = !!(tools && tools.length) && !noTools;
+  const { res, model, chars, tools: sentTools } = await post({ system, messages, tools: wantTools ? tools : null, maxTokens, effort, stream: true }, signal);
+  if (wantTools) pathMap.set(model, sentTools ? 'chat' : 'none');
+  let full = ''; let finish = null; let refusal = ''; let usage = null;
   const calls = [];
   const handle = (dataLine) => {
     if (dataLine === '[DONE]') return;
@@ -296,32 +474,129 @@ async function streamRound({ system, messages, tools = null, maxTokens = 16000, 
     if (c.finish_reason) finish = c.finish_reason;
   };
   let failure = null;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += value;
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).replace(/\r$/, '');
-        buf = buf.slice(i + 1);
-        if (line.startsWith('data:')) handle(line.slice(5).trim());
-      }
-    }
-  } catch (e) {
-    failure = e;
-  }
-  // 料金の記録（最後まで届かなかったときも、使った分は文字数からの推定で記録する）
+  try { await readSSE(res, handle); } catch (e) { failure = e; }
   const argChars = calls.reduce((t, c) => t + (c ? c.arguments.length + c.name.length : 0), 0);
-  await track(model, tag, usage, { i: chars / 2, o: (full.length + argChars) / 1.3 });
-  if (failure) {
-    if (failure instanceof AIError) throw failure;
-    if (failure && failure.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
-    throw new AIError('通信が途中で切れました。もう一度お試しください。', 'network');
-  }
+  await closeRound({ model, tag, usage, chars, outChars: full.length + argChars, failure });
   checkFinish(finish, refusal);
   const toolCalls = calls.filter((c) => c && c.name).map((c, i) => ({ id: c.id || `call_${Date.now().toString(36)}_${i}`, name: c.name, arguments: c.arguments || '{}' }));
-  return { text: full, toolCalls, finish };
+  return { text: full, toolCalls, finish, items: null };
+}
+
+/**
+ * 1回ぶんのやりとり（新しい入り口：Responses）。返事の形は streamRoundChat と同じ。
+ * items＝AIが返してきた「考えの記録つきの返事」。道具の結果を返すときに、そのまま添えて送るために持っておく（使えないときは null）
+ */
+async function streamRoundResponses({ system, messages, tools, noTools = false, replay = null, maxTokens = 16000, effort = 'medium', onText, signal = null, tag = 'coach' }, model) {
+  let sent;
+  try {
+    sent = await sendJSON('/responses', signal, (d) => buildResponsesBody({ system, messages, tools, noTools, replay, maxTokens, effort }, d, model), (err, b, d) => fixResponsesRequest(err, b, model, d));
+  } catch (e) { throw responsesFailure(e, model); }
+  const { res, drop, chars } = sent;
+  learnDrops(model, drop, 'r_');
+  let full = ''; let refusal = ''; let usage = null; let finish = null; let ended = false; let finalOutput = null;
+  const calls = []; const items = []; const byItem = new Map();
+  const callAt = (i) => calls[i] || (calls[i] = { id: '', name: '', arguments: '' });
+  const indexOf = (ev, fallback) => (Number.isInteger(ev.output_index) ? ev.output_index : (byItem.has(ev.item_id) ? byItem.get(ev.item_id) : fallback));
+  const handle = (dataLine) => {
+    if (dataLine === '[DONE]') return;
+    let ev;
+    try { ev = JSON.parse(dataLine); } catch { return; }
+    switch (ev.type) {
+      case 'response.output_item.added': {
+        const it = ev.item || {};
+        if (it.type !== 'function_call') break;
+        const i = Number.isInteger(ev.output_index) ? ev.output_index : calls.length;
+        const c = callAt(i);
+        c.id = it.call_id || it.id || c.id; c.name = it.name || c.name; c.arguments = it.arguments || c.arguments;
+        if (it.id) byItem.set(it.id, i);
+        break;
+      }
+      case 'response.function_call_arguments.delta': {
+        const c = calls[indexOf(ev, calls.length - 1)];
+        if (c && ev.delta) c.arguments += ev.delta;
+        break;
+      }
+      case 'response.function_call_arguments.done': {
+        const c = calls[indexOf(ev, calls.length - 1)];
+        if (c && typeof ev.arguments === 'string') c.arguments = ev.arguments;
+        break;
+      }
+      case 'response.output_item.done': {
+        const it = ev.item || {};
+        if (Number.isInteger(ev.output_index)) items[ev.output_index] = it; else items.push(it);
+        if (it.type === 'function_call') {
+          const c = callAt(indexOf({ output_index: ev.output_index, item_id: it.id }, calls.length));
+          if (it.call_id || it.id) c.id = it.call_id || it.id;
+          if (it.name) c.name = it.name;
+          if (typeof it.arguments === 'string' && it.arguments) c.arguments = it.arguments;
+        }
+        break;
+      }
+      case 'response.output_text.delta':
+        if (ev.delta) { full += ev.delta; if (onText) onText(ev.delta, full); }
+        break;
+      case 'response.refusal.delta': refusal += ev.delta || ''; break;
+      case 'response.completed':
+      case 'response.incomplete': {
+        ended = true;
+        const r = ev.response || {};
+        if (r.usage) usage = r.usage;
+        if (ev.type === 'response.incomplete' || r.status === 'incomplete') {
+          const why = r.incomplete_details && r.incomplete_details.reason;
+          finish = why === 'content_filter' ? 'content_filter' : 'length';
+        }
+        if (Array.isArray(r.output)) finalOutput = r.output;
+        break;
+      }
+      case 'response.failed': throw streamFailure((ev.response && ev.response.error) || {});
+      case 'error': throw streamFailure(ev);
+      default: break;
+    }
+  };
+  let failure = null;
+  try { await readSSE(res, handle); } catch (e) { failure = e; }
+  if (!failure && !ended && !full && !calls.some(Boolean)) failure = new Error('何も届かないまま、流れが終わった');
+  // 流れの途中の知らせが足りなかったときは、最後にまとまって届く内容から補う
+  if (!failure) {
+    if (!items.some(Boolean) && finalOutput) finalOutput.forEach((it, i) => { items[i] = it; });
+    const done = items.filter(Boolean);
+    if (!calls.some((c) => c && c.name)) {
+      for (const it of done) if (it.type === 'function_call') calls.push({ id: it.call_id || it.id || '', name: it.name || '', arguments: it.arguments || '' });
+    }
+    if (!full) {
+      const t = done.filter((it) => it.type === 'message').flatMap((it) => it.content || []).filter((c) => c && c.type === 'output_text').map((c) => c.text || '').join('');
+      if (t) { full = t; if (onText) onText(t, t); }
+    }
+  }
+  const argChars = calls.reduce((t, c) => t + (c ? c.arguments.length + c.name.length : 0), 0);
+  await closeRound({ model, tag, usage: respUsage(usage), chars, outChars: full.length + argChars, failure });
+  checkFinish(finish, refusal);
+  const toolCalls = calls.filter((c) => c && c.name).map((c, i) => ({ id: c.id || `call_${Date.now().toString(36)}_${i}`, name: c.name, arguments: c.arguments || '{}' }));
+  if (!finish) finish = toolCalls.length ? 'tool_calls' : 'stop';
+  // 次に道具の結果を返すとき、そのまま添えられる形か（考えの記録が暗号化されて届いていて、道具の呼び出しにIDがあるとき）
+  const done = items.filter(Boolean);
+  const replayable = !drop.has('include') && !isOff(model, 'r_include') && done.length
+    && done.every((it) => (it.type !== 'reasoning' || it.encrypted_content) && (it.type !== 'function_call' || it.call_id));
+  return { text: full, toolCalls, finish, items: replayable ? done : null };
+}
+
+/**
+ * 1回ぶんのやりとり。道具を使う会話は、まず新しい入り口（Responses）で送り、使えないときはこれまでの入り口（Chat Completions）にもどる。
+ * noTools＝この回は道具を使わせない（会話が長引いたときの、最後の答え）
+ * @returns {Promise<{text: string, toolCalls: {id, name, arguments}[], finish: string|null, items: object[]|null}>}
+ */
+async function streamRound(opts) {
+  const model = modelId();
+  if (opts.tools && opts.tools.length && !isOff(model, 'r_api') && !isOff(model, 'r_tools')) {
+    try {
+      const r = await streamRoundResponses(opts, model);
+      if (!opts.noTools) pathMap.set(model, 'responses');
+      return r;
+    } catch (e) {
+      if (!(e instanceof ResponsesFallback)) throw e;
+    }
+  }
+  return streamRoundChat(opts);
 }
 
 /** 文字が少しずつ届く形で答えをもらう（ふりかえりなど） */
@@ -340,11 +615,13 @@ export async function streamText({ system, messages, maxTokens = 16000, effort =
  *   {role:'tool', tool_call_id, content, ui?}   ← ui は画面に出すためだけの情報（AIには送らない）
  */
 export async function runChat({ system, messages, tools, toApi = (m) => m, execute, signal = null, tag = 'coach', maxRounds = 4, onRound, onText, onMessage }) {
+  // このやりとりの中で、AIが返してきた「考えの記録つきの返事」（道具の呼び出しのID → 返事そのもの）。保存はしない
+  const replay = new Map();
   for (let round = 0; round < maxRounds; round++) {
     if (onRound) onRound(round);
     const lastRound = round === maxRounds - 1;
     const r = await streamRound({
-      system, messages: toApi(messages), tools: lastRound ? null : tools, maxTokens: 16000,
+      system, messages: toApi(messages), tools, noTools: lastRound, replay, maxTokens: 16000,
       effort: round === 0 ? 'medium' : 'low', onText: (_, full) => { if (onText) onText(full); }, signal, tag,
     });
     if (!r.toolCalls.length) {
@@ -359,6 +636,7 @@ export async function runChat({ system, messages, tools, toApi = (m) => m, execu
     };
     messages.push(asst);
     if (onMessage) onMessage(asst);
+    if (r.items) for (const c of r.toolCalls) replay.set(c.id, r.items);
     // すべての依頼に必ず答えを返す（答えのない依頼が残ると、次のやりとりがエラーになるため）
     for (const c of r.toolCalls) {
       let out;
@@ -413,12 +691,16 @@ function friendly(status, err) {
   return `うまくいきませんでした（${status}）。`;
 }
 
-/** 文章の返事（SSE）の中から、使用量を取り出す */
+/** 文章の返事（SSE）の中から、使用量を取り出す（これまでの入り口は ev.usage、新しい入り口は ev.response.usage） */
 function usageFromSSE(text) {
   let usage = null;
   for (const line of String(text).split('\n')) {
     if (!line.startsWith('data:')) continue;
-    try { const ev = JSON.parse(line.slice(5).trim()); if (ev.usage) usage = ev.usage; } catch { /* [DONE] など */ }
+    try {
+      const ev = JSON.parse(line.slice(5).trim());
+      if (ev.usage) usage = ev.usage;
+      else if (ev.response && ev.response.usage) usage = respUsage(ev.response.usage);
+    } catch { /* [DONE] など */ }
   }
   return usage;
 }
@@ -435,11 +717,14 @@ export async function diagnose(onStep) {
   const model = modelId();
   if (!key) { add({ id: 'key', label: 'APIキー', ok: false, note: 'APIキーがまだ設定されていません。' }); return rows; }
   if (!keyLooksValid(key)) { add({ id: 'key', label: 'APIキー', ok: false, note: 'キーに、使えない文字（全角の文字など）がまじっています。コピーし直して貼り付けてください。' }); return rows; }
+  forget(model); // 前に覚えたことは、いったん忘れる（このあと、アプリが自分で調べなおす）
   const auth = { authorization: `Bearer ${key}` };
-  const post = { method: 'POST', headers: { ...auth, 'content-type': 'application/json' } };
+  const postInit = { method: 'POST', headers: { ...auth, 'content-type': 'application/json' } };
   const chatUrl = `${API_BASE}/chat/completions`;
+  const respUrl = `${API_BASE}/responses`;
 
-  const probe = async (id, label, url, init, judge) => {
+  // soften(status, err) が文章を返したら、「だめ」ではなく「注意（使わないので問題なし）」として見せる
+  const probe = async (id, label, url, init, judge, soften = null) => {
     let res;
     try { res = await fetch(url, init); } catch {
       return add({ id, label, ok: false, status: 0, note: 'つながりませんでした。電波・Wi-Fi・VPN・広告ブロックなどを確かめてください。', detail: '' });
@@ -447,7 +732,10 @@ export async function diagnose(onStep) {
     if (!res.ok) {
       let err = null;
       try { err = (await res.json()).error; } catch { /* ignore */ }
-      return add({ id, label, ok: false, status: res.status, note: friendly(res.status, err), detail: scrub((err && err.message) || '').slice(0, 220) });
+      const detail = scrub((err && err.message) || '').slice(0, 220);
+      const soft = soften && soften(res.status, err);
+      if (soft) return add({ id, label, ok: true, warn: true, status: res.status, note: soft, detail });
+      return add({ id, label, ok: false, status: res.status, note: friendly(res.status, err), detail });
     }
     const text = await res.text();
     let out = {};
@@ -455,9 +743,13 @@ export async function diagnose(onStep) {
     if (out.usage) await track(model, 'other', out.usage, null);
     return add({ id, label, ok: true, status: res.status, note: out.note || '問題ありません', warn: !!out.warn });
   };
+  const okRow = (id) => rows.some((r) => r.id === id && r.ok && !r.warn);
   const ask1 = [{ role: 'user', content: '「OK」とだけ答えてください。' }];
+  const meal = '昼食にラーメンを食べたことにして、record_meal を呼んでください（栄養は適当でかまいません）。';
   const base = { model, messages: ask1, max_completion_tokens: 1500 };
   const plain = (t) => { const d = JSON.parse(t); return { note: '返事がきました', usage: d.usage }; };
+  const rBase = { model, store: false, max_output_tokens: 1500, reasoning: { effort: 'low' } };
+  const rPlain = (t) => { const d = JSON.parse(t); return { note: '返事がきました', usage: respUsage(d.usage) }; };
 
   await probe('models', 'キーの確認', `${API_BASE}/models`, { headers: auth }, (t) => {
     const ids = (JSON.parse(t).data || []).map((m) => m.id);
@@ -465,24 +757,39 @@ export async function diagnose(onStep) {
     return { note: `使えるAIは${ids.length}種類。選んでいる「${model}」は${ok ? '使えます' : 'このキーでは見つかりません（AIの設定で別の種類を選んでください）'}。`, warn: !ok };
   });
   if (!rows[0].ok) return rows; // キーか通信がだめなら、これ以上は試さない
-  await probe('chat', '文章の返事', chatUrl, { ...post, body: JSON.stringify(base) }, plain);
-  await probe('effort', '考える深さの指定', chatUrl, { ...post, body: JSON.stringify({ ...base, reasoning_effort: 'low' }) }, plain);
-  await probe('stream', '少しずつ届く返事＋使用量', chatUrl, { ...post, body: JSON.stringify({ ...base, stream: true, stream_options: { include_usage: true } }) }, (t) => {
+  await probe('chat', '文章の返事', chatUrl, { ...postInit, body: JSON.stringify(base) }, plain);
+  await probe('effort', '考える深さの指定', chatUrl, { ...postInit, body: JSON.stringify({ ...base, reasoning_effort: 'low' }) }, plain);
+  await probe('stream', '少しずつ届く返事＋使用量', chatUrl, { ...postInit, body: JSON.stringify({ ...base, stream: true, stream_options: { include_usage: true } }) }, (t) => {
     const usage = usageFromSSE(t);
     return { note: usage ? '返事も使用量も届きました' : '返事は届きましたが、使用量は届きませんでした（料金は推定になります）', usage, warn: !usage };
   });
-  await probe('tools', '記録の道具（会話からの自動記録）', chatUrl, {
-    ...post,
-    body: JSON.stringify({ model, max_completion_tokens: 1500, tools: TOOLS, messages: [{ role: 'user', content: '昼食にラーメンを食べたことにして、record_meal を呼んでください（栄養は適当でかまいません）。' }] }),
+  // 会話からの自動記録は、新しい入り口（Responses）を使う
+  await probe('resp', '新しい入り口での返事', respUrl, { ...postInit, body: JSON.stringify({ ...rBase, input: ask1[0].content }) }, rPlain);
+  await probe('rtools', '記録の道具（新しい入り口）', respUrl, {
+    ...postInit, body: JSON.stringify({ ...rBase, tools: flatTools(TOOLS), input: meal }),
+  }, (t) => {
+    const d = JSON.parse(t);
+    const called = (d.output || []).some((o) => o.type === 'function_call');
+    return { note: called ? '記録の道具が使えます' : '道具は受け付けられました（今回は呼ばれませんでした）', usage: respUsage(d.usage) };
+  });
+  await probe('rall', 'アプリと同じ形（新しい入り口・すべてまとめて）', respUrl, {
+    ...postInit,
+    body: JSON.stringify({ ...rBase, stream: true, include: ['reasoning.encrypted_content'], tools: flatTools(TOOLS), tool_choice: 'auto', instructions: 'あなたは短く答えるアシスタントです。', input: ask1 }),
+  }, (t) => ({ note: '問題ありません', usage: usageFromSSE(t) }));
+  // これまでの入り口：新しい入り口で道具が使えるなら、こちらで使えなくても問題ない
+  const viaResp = okRow('rtools') || okRow('rall');
+  await probe('tools', '記録の道具（これまでの入り口）', chatUrl, {
+    ...postInit, body: JSON.stringify({ model, max_completion_tokens: 1500, tools: TOOLS, messages: [{ role: 'user', content: meal }] }),
   }, (t) => {
     const d = JSON.parse(t);
     const called = d.choices && d.choices[0] && d.choices[0].finish_reason === 'tool_calls';
     return { note: called ? '記録の道具が使えます' : '道具は受け付けられました（今回は呼ばれませんでした）', usage: d.usage };
+  }, (status) => (viaResp && status === 400 ? 'このAIは、これまでの入り口では道具を使えません。新しい入り口で使うので、問題ありません。' : null));
+  const viaChat = okRow('tools');
+  add({
+    id: 'path', label: '会話からの自動記録', ok: viaResp || viaChat,
+    note: viaResp ? '使えます（新しい入り口）' : viaChat ? '使えます（これまでの入り口）' : '使えません。記録は、画面下の＋ボタンからお願いします。',
   });
-  await probe('all', 'アプリと同じ形（すべてまとめて）', chatUrl, {
-    ...post,
-    body: JSON.stringify({ model, max_completion_tokens: 1500, reasoning_effort: 'low', stream: true, stream_options: { include_usage: true }, tools: TOOLS, messages: ask1 }),
-  }, (t) => ({ note: '問題ありません', usage: usageFromSSE(t) }));
   return rows;
 }
 
@@ -492,6 +799,10 @@ export function diagText(rows) {
   rows.forEach((r, i) => {
     lines.push(`${i + 1}. ${r.label}: ${r.ok ? (r.warn ? '注意' : 'OK') : `だめ${r.status ? `（${r.status}）` : ''}`} … ${r.note}${r.detail ? `\n   詳細: ${r.detail}` : ''}`);
   });
+  const tp = toolPath();
+  if (tp) lines.push(`アプリが使っている道具の入り口: ${tp === 'responses' ? '新しい入り口（Responses）' : tp === 'chat' ? 'これまでの入り口（Chat Completions）' : '道具なし'}`);
+  const why = toolsWhy();
+  if (why) lines.push(`道具が使えなかった理由: ${why}`);
   const le = getLastError();
   if (le) lines.push(`直前のエラー: ${le.kind}${le.status ? `（${le.status}）` : ''} ${le.detail || ''}`);
   return lines.join('\n');
