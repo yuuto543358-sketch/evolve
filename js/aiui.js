@@ -9,6 +9,20 @@ import { notify, app } from './app.js';
 import { today, esc, fmtDateLong } from './util.js';
 import { loadImage } from './photos.js';
 
+/** 選べるAIの種類：おすすめ3つ＋このキーで使えるもの */
+function modelOptions() {
+  const avail = S.meta.aiModels || [];
+  const base = ai.AI_MODELS.filter((m) => !avail.length || avail.includes(m.id)).map((m) => ({ value: m.id, label: m.label }));
+  const extra = avail.filter((id) => !ai.AI_MODELS.some((m) => m.id === id)).slice(0, 8).map((id) => ({ value: id, label: id }));
+  const list = [...base, ...extra];
+  if (!list.some((o) => o.value === ai.modelId())) list.unshift({ value: ai.modelId(), label: ai.modelLabel() });
+  return list;
+}
+function modelDesc(id) {
+  const m = ai.AI_MODELS.find((x) => x.id === id);
+  return m ? m.desc : `${id}（料金はOpenAIの料金表を確認してください）`;
+}
+
 /** かんたんな整形（太字と改行だけ） */
 export function mdLite(text) {
   return esc(text).replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
@@ -36,32 +50,33 @@ export async function openAISetup({ onReady = null } = {}) {
   const cur = await ai.getKey();
   openSheet({
     title: 'AIの設定',
-    subtitle: 'あなたのAPIキーで、アプリの中のAIが動きます',
+    subtitle: 'あなたのOpenAIのAPIキーで、アプリの中のAIが動きます',
     html: `
       <div class="imp-card">
-        <div class="imp-card-h"><span class="ic-sq" style="--sq:#7A68C9">${icon('spark', 17)}</span><div><strong>APIキー</strong><small>${cur ? `設定済み（…${esc(cur.slice(-4))}）。変えるときだけ入力してください` : 'AnthropicのサイトでつくったAPIキーを貼り付けます'}</small></div></div>
-        <input class="input" type="password" name="key" placeholder="sk-ant-..." autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="imp-card-h"><span class="ic-sq" style="--sq:#7A68C9">${icon('spark', 17)}</span><div><strong>APIキー</strong><small>${cur ? `設定済み（…${esc(cur.slice(-4))}）。変えるときだけ入力してください` : 'OpenAIのサイトでつくったAPIキーを貼り付けます'}</small></div></div>
+        <input class="input" type="password" name="key" placeholder="sk-..." autocomplete="off" autocapitalize="off" spellcheck="false">
         <button type="button" class="btn btn-primary btn-block" data-save>${icon('check', 18)}保存して、つながるか確かめる</button>
         ${cur ? `<button type="button" class="btn btn-text-danger" data-remove>${icon('trash', 16)}この端末からキーを消す</button>` : ''}
       </div>
       <div class="imp-card">
         <div class="imp-card-h"><span class="ic-sq" style="--sq:#1F8070">${icon('bolt', 17)}</span><div><strong>使うAIの種類</strong><small>あとからいつでも変えられます</small></div></div>
-        ${choice('model', ai.AI_MODELS.map((m) => ({ value: m.id, label: m.label })), ai.modelId())}
-        <p class="hint" data-model-desc>${ai.AI_MODELS.find((m) => m.id === ai.modelId()).desc}</p>
+        ${choice('model', modelOptions(), ai.modelId())}
+        <p class="hint" data-model-desc>${modelDesc(ai.modelId())}</p>
       </div>
       <div class="guide">
         <h3 class="mini-h">APIキーの作り方（最初に1回だけ）</h3>
         <ol class="steps">
-          <li>Safariで <b>console.anthropic.com</b> を開き、アカウントを作ります（メールアドレスが必要です）</li>
-          <li><b>「Billing（請求）」</b> でクレジットカードを登録し、使う分のお金（クレジット）を先に入れます。まずは <b>5ドル</b> で十分です</li>
-          <li><b>「API Keys」</b> →  <b>「Create Key」</b> を押して、名前を「EVOLVE」などにして作ります</li>
-          <li>出てきた <b>sk-ant- で始まる長い文字</b> をコピーして、上の欄に貼り付けます（この文字は1回しか表示されません）</li>
+          <li>Safariで <b>platform.openai.com</b> を開き、ログインします（ChatGPTと同じアカウントで入れます）</li>
+          <li>設定の <b>「Billing（請求）」</b> でクレジットカードを登録し、使う分のお金（クレジット）を先に入れます。まずは <b>5ドル</b> で十分です</li>
+          <li><b>「API keys」</b> → <b>「Create new secret key」</b> を押して、名前を「EVOLVE」などにして作ります</li>
+          <li>出てきた <b>sk- で始まる長い文字</b> をコピーして、上の欄に貼り付けます（この文字は1回しか表示されません）</li>
         </ol>
         <h3 class="mini-h">知っておいてほしいこと</h3>
         <ul class="steps">
-          <li>料金は<b>使った分だけ</b>かかります。入れたクレジットがなくなると止まるので、使いすぎの心配はありません</li>
+          <li>料金は<b>使った分だけ</b>かかります。ChatGPTの月額プラン（Plusなど）とは別の料金です</li>
+          <li>OpenAIの「Billing」で自動チャージ（Auto recharge）をオフにしておくと、入れたクレジットがなくなったら止まるので安心です</li>
           <li>APIキーは<b>このiPhoneの中にだけ</b>保存します。バックアップファイルには入りません。ほかの人には教えないでください</li>
-          <li>AIを使うときは、相談の内容と、あなたの記録のまとめ（体重・運動・食事など）がAnthropicのAIに送られます</li>
+          <li>AIを使うときは、相談の内容と、あなたの記録のまとめ（体重・運動・食事など）がOpenAIのAIに送られます</li>
           <li>AIの答えは参考です。体調に不安があるときは、無理をせず専門家に相談してください</li>
         </ul>
       </div>`,
@@ -69,7 +84,7 @@ export async function openAISetup({ onReady = null } = {}) {
       body.addEventListener('change', async (e) => {
         if (e.target.name === 'model') {
           await store.setSettings({ aiModel: e.target.value });
-          body.querySelector('[data-model-desc]').textContent = ai.AI_MODELS.find((m) => m.id === e.target.value).desc;
+          body.querySelector('[data-model-desc]').textContent = modelDesc(e.target.value);
         }
       });
       body.addEventListener('click', async (e) => {
@@ -84,12 +99,18 @@ export async function openAISetup({ onReady = null } = {}) {
         if (!btn) return;
         const k = val(body, 'key').trim();
         if (!k && !cur) { toast('APIキーを貼り付けてください', { icon: 'info' }); return; }
-        if (k && !/^sk-ant-/.test(k)) { toast('APIキーは「sk-ant-」で始まります。コピーした文字を確かめてください', { icon: 'info', duration: 4500 }); return; }
+        if (k && /^sk-ant-/.test(k)) { toast('これはAnthropicのキーのようです。OpenAIのキー（sk- で始まるもの）を入れてください', { icon: 'info', duration: 5000 }); return; }
+        if (k && !/^sk-/.test(k)) { toast('APIキーは「sk-」で始まります。コピーした文字を確かめてください', { icon: 'info', duration: 4500 }); return; }
         const prev = cur;
         if (k) await ai.setKey(k);
         btn.disabled = true; btn.innerHTML = '確かめています…';
         try {
-          await ai.testKey();
+          const ids = await ai.testKey();
+          // 選んでいる種類がこのキーで使えないときは、使えるものに切りかえる
+          if (ids.length && !ids.includes(ai.modelId())) {
+            const pick = ai.AI_MODELS.map((m) => m.id).find((id) => ids.includes(id)) || ids[0];
+            await store.setSettings({ aiModel: pick });
+          }
           close();
           toast('AIにつながりました', { icon: 'spark' });
           app.refresh();
@@ -263,7 +284,7 @@ export function makeAIMenu() {
     };
     try {
       const r = await ai.askJSON({
-        system: `${ai.COACH_SYSTEM}\n\nあなたは今日1日ぶんのトレーニングメニューを作ります。\n- 「登録している筋トレ種目」の名前だけを使う。\n- 回数とセット数は、その種目の前回の記録を基準に、同じか少しだけ多くする。未実施の種目は軽めから。\n- 今日の予定、直近数日の運動の内容（同じ部位が続いていないか）、疲れ具合を考える。\n- 時間がない日・疲れている日は、1〜2種目や休養でもよい。無理をさせない。\n- 種目は多くても4つまで。\n\n<ユーザーの記録>\n${ai.buildContext({ days: 10 })}\n</ユーザーの記録>`,
+        system: `${ai.COACH_SYSTEM}\n\nあなたは今日1日ぶんのトレーニングメニューを作り、JSONで返します。\n- 「登録している筋トレ種目」の名前だけを使う。\n- 回数とセット数は、その種目の前回の記録を基準に、同じか少しだけ多くする。未実施の種目は軽めから。\n- 今日の予定、直近数日の運動の内容（同じ部位が続いていないか）、疲れ具合を考える。\n- 時間がない日・疲れている日は、1〜2種目や休養でもよい。無理をさせない。\n- 種目は多くても4つまで。\n\n<ユーザーの記録>\n${ai.buildContext({ days: 10 })}\n</ユーザーの記録>`,
         messages: [{ role: 'user', content: '今日のトレーニングメニューを作ってください。' }],
         schema, effort: 'medium',
       });
@@ -317,11 +338,11 @@ const MEAL_SCHEMA = {
 export async function estimateMeal({ text = '', file = null }) {
   if (!(await ai.getKey())) { openAISetup(); return null; }
   const content = [];
-  if (file) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: await fileToJpegBase64(file) } });
+  if (file) content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${await fileToJpegBase64(file)}` } });
   content.push({ type: 'text', text: `${text ? `食べたもの：${text}\n` : ''}${file ? 'この写真の食事について、' : ''}タンパク質(g)・脂質(g)・カロリー(kcal)を見積もってください。` });
   try {
     const r = await ai.askJSON({
-      system: 'あなたは日本の食事にくわしい栄養の見積もり係です。ユーザーが食べたものの説明や写真から、1食ぶんのタンパク質・脂質・カロリーを現実的な数字で見積もります。量が書かれていないときは、日本の一般的な1人前を仮定します。外食チェーンやコンビニの定番商品は、よく知られている栄養成分に近い数字にします。数字は目安なので、細かすぎる端数にはしません。食べたことを評価したり注意したりはしません。',
+      system: 'あなたは日本の食事にくわしい栄養の見積もり係です。答えはJSONで返します。ユーザーが食べたものの説明や写真から、1食ぶんのタンパク質・脂質・カロリーを現実的な数字で見積もります。量が書かれていないときは、日本の一般的な1人前を仮定します。外食チェーンやコンビニの定番商品は、よく知られている栄養成分に近い数字にします。数字は目安なので、細かすぎる端数にはしません。食べたことを評価したり注意したりはしません。',
       messages: [{ role: 'user', content }],
       schema: MEAL_SCHEMA, effort: 'low',
     });

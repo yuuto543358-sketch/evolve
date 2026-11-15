@@ -6,7 +6,7 @@ import { icon, logoMark } from '../icons.js';
 import { openSheet, stepper, chips, choice, num, val, toast, confirmDialog, largeTitle, secH } from '../ui.js';
 import { ring } from '../charts.js';
 import { openHealthImport } from '../health.js';
-import { hasKeySync, AI_MODELS, modelId } from '../ai.js';
+import { hasKeySync, modelLabel } from '../ai.js';
 import { openAISetup } from '../aiui.js';
 import { exportBackup, restoreBackup, validateBackup, storageInfo } from '../backup.js';
 import { isDemo, setDemo, clearAll, deleteDatabase } from '../db.js';
@@ -92,7 +92,7 @@ export function render(root, app) {
 
     ${secH('AI')}
     <div class="group">
-      ${row({ ic: 'spark', color: '#7A68C9', label: 'AIの設定', sub: hasKeySync() ? `使えます ・ ${(AI_MODELS.find((m) => m.id === modelId()) || AI_MODELS[0]).label}` : 'APIキーを入れると、コーチに相談できます', act: 'ai' })}
+      ${row({ ic: 'spark', color: '#7A68C9', label: 'AIの設定', sub: hasKeySync() ? `使えます ・ ${modelLabel()}` : 'OpenAIのAPIキーを入れると、コーチに相談できます', act: 'ai' })}
     </div>
 
     ${secH('連携')}

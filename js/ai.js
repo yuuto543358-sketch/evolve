@@ -1,8 +1,8 @@
-// AI（Claude）との通信と、AIに渡す「あなたの記録のまとめ」
+// AI（OpenAI）との通信と、AIに渡す「あなたの記録のまとめ」
 //
-// EVOLVEにはサーバーがないので、あなたのAPIキーを使って、この端末から直接AnthropicのAPIを呼び出します。
+// EVOLVEにはサーバーがないので、あなたのOpenAIのAPIキーを使って、この端末から直接OpenAIのAPIを呼び出します。
 // ・APIキーはこの端末の中（IndexedDB）にだけ保存し、バックアップファイルには含めません
-// ・ビルド不要・外部ライブラリなしのアプリなので、公式SDKではなく fetch で直接呼んでいます
+// ・ビルド不要・外部ライブラリなしのアプリなので、SDKではなく fetch で直接呼んでいます（Chat Completions API）
 import * as db from './db.js';
 import * as store from './store.js';
 import { S } from './store.js';
@@ -11,20 +11,24 @@ import { dayEnergy, cardioKind, workoutKcal, cardioRecordKcal } from './calc.js'
 import { todayPlan } from './plan.js';
 import { today, addDays, parseYmd, byDateDesc } from './util.js';
 
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const API_VERSION = '2026-10-21';
+const API_BASE = 'https://api.openai.com/v1';
 
+/** よく使うモデル（「AIの設定」で、あなたのキーで使えるモデルの一覧からも選べます） */
 export const AI_MODELS = [
-  { id: 'claude-opus-5-5', label: 'Opus 5.5', desc: 'かしこさ重視（おすすめ）。相談1回 数円くらい' },
-  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', desc: 'バランス型。相談1回 1〜2円くらい' },
-  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', desc: 'とにかく安い。相談1回 1円未満' },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', desc: 'かしこさ重視（おすすめ）。相談1回 1〜2円くらい' },
+  { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', desc: 'バランス型。相談1回 1円くらい' },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', desc: 'とにかく安い。相談1回 1円未満' },
 ];
-export const DEFAULT_MODEL = 'claude-opus-5-5';
+export const DEFAULT_MODEL = 'gpt-6.1-sol';
 
 let cachedKey;
 
 export async function getKey() {
-  if (cachedKey === undefined) cachedKey = (await db.kvGet('aiKey')) || '';
+  if (cachedKey === undefined) {
+    cachedKey = (await db.kvGet('aiKey')) || '';
+    // 以前の版で入れたAnthropicのキーは使えないので、未設定あつかいにする
+    if (/^sk-ant-/.test(cachedKey)) cachedKey = '';
+  }
   return cachedKey;
 }
 export async function setKey(k) {
@@ -32,78 +36,95 @@ export async function setKey(k) {
   await db.kvSet('aiKey', cachedKey);
 }
 export function hasKeySync() { return !!cachedKey; }
-export function modelId() { return S.settings.aiModel || DEFAULT_MODEL; }
+export function modelId() {
+  const m = S.settings.aiModel;
+  return m && !/^claude-/.test(m) ? m : DEFAULT_MODEL;
+}
+export function modelLabel(id = modelId()) {
+  const m = AI_MODELS.find((x) => x.id === id);
+  return m ? m.label : id;
+}
 
 /** わかりやすいエラー */
 export class AIError extends Error {
   constructor(message, kind) { super(message); this.kind = kind; }
 }
 
-function errorFor(status, type, msg) {
+function errorFor(status, err) {
+  const code = (err && (err.code || err.type)) || '';
+  const msg = (err && err.message) || '';
   if (status === 401) return new AIError('APIキーが正しくないようです。PROFILE →「AIの設定」でキーを確認してください。', 'auth');
-  if (status === 402 || type === 'billing_error' || /credit balance/i.test(msg || '')) return new AIError('APIの残高（クレジット）が足りないようです。Anthropicのコンソールで残高を確認してください。', 'billing');
-  if (status === 403) return new AIError('このAPIキーでは使えない設定のようです。Anthropicのコンソールでキーの権限を確認してください。', 'permission');
+  if (code === 'insufficient_quota' || /quota|billing/i.test(msg)) return new AIError('APIの残高（クレジット）が足りないようです。OpenAIのサイトの「Billing」で残高を確認してください。', 'billing');
+  if (status === 404 || code === 'model_not_found') return new AIError('選んだAIの種類（モデル）が、このキーでは使えないようです。PROFILE →「AIの設定」で別の種類を選んでください。', 'model');
+  if (status === 403) return new AIError('このAPIキーでは使えない設定のようです。OpenAIのサイトでキーの権限を確認してください。', 'permission');
   if (status === 429) return new AIError('短い時間に使いすぎたようです。1分ほど待ってから、もう一度お試しください。', 'rate');
-  if (status === 529 || status >= 500) return new AIError('AIが混み合っています。少し待ってから、もう一度お試しください。', 'overloaded');
+  if (status >= 500) return new AIError('AIが混み合っています。少し待ってから、もう一度お試しください。', 'overloaded');
   if (status === 413) return new AIError('送る内容が大きすぎました。写真を小さくするか、文章を短くしてお試しください。', 'too_large');
-  return new AIError(`AIに接続できませんでした（${status}）。${msg ? msg.slice(0, 120) : ''}`, 'other');
+  return new AIError(`AIに接続できませんでした（${status}）。${msg ? msg.slice(0, 140) : ''}`, 'other');
 }
 
+// モデルによって使えない指定があるので、断られたらその指定を外してやり直す
+const unsupported = new Set();
+
 function buildBody({ system, messages, maxTokens, effort, schema, stream }) {
-  const model = modelId();
-  const body = {
-    model,
-    max_tokens: maxTokens,
-    messages,
-    output_config: { effort },
-  };
-  if (system) body.system = system;
-  if (schema) body.output_config.format = { type: 'json_schema', schema };
+  const msgs = system ? [{ role: 'system', content: system }, ...messages] : messages;
+  const body = { model: modelId(), messages: msgs };
+  if (!unsupported.has('max_completion_tokens')) body.max_completion_tokens = maxTokens; else body.max_tokens = maxTokens;
+  if (effort && !unsupported.has('reasoning_effort')) body.reasoning_effort = effort;
+  if (schema) {
+    body.response_format = unsupported.has('json_schema')
+      ? { type: 'json_object' }
+      : { type: 'json_schema', json_schema: { name: 'result', strict: true, schema } };
+  }
   if (stream) body.stream = true;
-  // 安全フィルターで止まったとき、別のモデルで自動的にやり直してもらう（HaikuはAPI側が未対応）
-  if (model !== 'claude-haiku-5-5') body.fallbacks = 'default';
   return body;
 }
 
-async function post(body, signal) {
+async function authHeaders() {
   const key = await getKey();
   if (!key) throw new AIError('APIキーがまだ設定されていません。', 'nokey');
   if (!navigator.onLine) throw new AIError('インターネットにつながっていません。つながってから、もう一度お試しください。', 'offline');
-  const headers = {
-    'content-type': 'application/json',
-    'x-api-key': key,
-    'anthropic-version': API_VERSION,
-    // ブラウザから直接APIを呼ぶための指定（キーはこの端末の中だけにあります）
-    'anthropic-dangerous-direct-browser-access': 'true',
-  };
-  if (body.fallbacks) headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+  return { 'content-type': 'application/json', authorization: `Bearer ${key}` };
+}
+
+async function post(opts, signal, attempt = 0) {
+  const headers = await authHeaders();
   let res;
   try {
-    res = await fetch(API_URL, { method: 'POST', headers, body: JSON.stringify(body), signal });
+    res = await fetch(`${API_BASE}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(buildBody(opts)), signal });
   } catch (e) {
     if (e && e.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
     throw new AIError('AIに接続できませんでした。通信の状態を確認して、もう一度お試しください。', 'network');
   }
   if (!res.ok) {
-    let type = ''; let msg = '';
-    try { const j = await res.json(); type = j.error && j.error.type; msg = j.error && j.error.message; } catch { /* ignore */ }
-    throw errorFor(res.status, type, msg);
+    let err = null;
+    try { err = (await res.json()).error; } catch { /* ignore */ }
+    if (res.status === 400 && attempt < 3 && err) {
+      const m = `${err.param || ''} ${err.message || ''}`;
+      let retry = false;
+      if (/reasoning_effort/.test(m) && !unsupported.has('reasoning_effort')) { unsupported.add('reasoning_effort'); retry = true; }
+      else if (/max_completion_tokens/.test(m) && !unsupported.has('max_completion_tokens')) { unsupported.add('max_completion_tokens'); retry = true; }
+      else if (/response_format|json_schema/.test(m) && !unsupported.has('json_schema')) { unsupported.add('json_schema'); retry = true; }
+      if (retry) return post(opts, signal, attempt + 1);
+    }
+    throw errorFor(res.status, err);
   }
   return res;
 }
 
-function checkStop(stopReason) {
-  if (stopReason === 'refusal') throw new AIError('この内容にはAIが答えられませんでした。聞き方を変えて、もう一度お試しください。', 'refusal');
+function checkFinish(reason, refusal) {
+  if (refusal || reason === 'content_filter') throw new AIError('この内容にはAIが答えられませんでした。聞き方を変えて、もう一度お試しください。', 'refusal');
 }
 
 /** 1回で答えをもらう（食事の見積もり・メニュー作成など） */
 export async function ask({ system, messages, maxTokens = 8000, effort = 'low', schema = null, signal = null }) {
-  const res = await post(buildBody({ system, messages, maxTokens, effort, schema }), signal);
+  const res = await post({ system, messages, maxTokens, effort, schema }, signal);
   const data = await res.json();
-  checkStop(data.stop_reason);
-  const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-  if (data.stop_reason === 'max_tokens' && schema) throw new AIError('AIの答えが途中で切れました。もう一度お試しください。', 'truncated');
-  return { text, usage: data.usage, model: data.model };
+  const choice = (data.choices && data.choices[0]) || {};
+  const msg = choice.message || {};
+  checkFinish(choice.finish_reason, msg.refusal);
+  if (choice.finish_reason === 'length' && schema) throw new AIError('AIの答えが途中で切れました。もう一度お試しください。', 'truncated');
+  return { text: msg.content || '', usage: data.usage, model: data.model };
 }
 
 /** JSONで答えをもらう */
@@ -120,24 +141,20 @@ export async function askJSON(opts) {
 
 /** 文字が少しずつ届く形で答えをもらう（相談・ふりかえり） */
 export async function streamText({ system, messages, maxTokens = 16000, effort = 'medium', onText, signal = null }) {
-  const res = await post(buildBody({ system, messages, maxTokens, effort, stream: true }), signal);
+  const res = await post({ system, messages, maxTokens, effort, stream: true }, signal);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = ''; let full = ''; let stop = null;
+  let buf = ''; let full = ''; let finish = null; let refusal = '';
   const handle = (dataLine) => {
+    if (dataLine === '[DONE]') return;
     let ev;
     try { ev = JSON.parse(dataLine); } catch { return; }
-    if (ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'fallback') {
-      // 別のモデルに切り替わった：ここまでの文章は捨てて、続きから表示し直す
-      full = ''; if (onText) onText('', full);
-    } else if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
-      full += ev.delta.text;
-      if (onText) onText(ev.delta.text, full);
-    } else if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason) {
-      stop = ev.delta.stop_reason;
-    } else if (ev.type === 'error') {
-      const t = ev.error && ev.error.type;
-      throw errorFor(t === 'overloaded_error' ? 529 : 500, t, ev.error && ev.error.message);
-    }
+    if (ev.error) throw errorFor(500, ev.error);
+    const c = ev.choices && ev.choices[0];
+    if (!c) return;
+    const d = c.delta || {};
+    if (d.refusal) refusal += d.refusal;
+    if (d.content) { full += d.content; if (onText) onText(d.content, full); }
+    if (c.finish_reason) finish = c.finish_reason;
   };
   try {
     for (;;) {
@@ -156,14 +173,29 @@ export async function streamText({ system, messages, maxTokens = 16000, effort =
     if (e && e.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
     throw new AIError('通信が途中で切れました。もう一度お試しください。', 'network');
   }
-  checkStop(stop);
-  return { text: full, stop };
+  checkFinish(finish, refusal);
+  return { text: full, stop: finish };
 }
 
-/** キーが使えるか、いちばん小さなお願いで確かめる */
+/**
+ * キーが使えるか確かめる（モデルの一覧を取るだけなので、お金はかかりません）
+ * @returns {Promise<string[]>} このキーで使える文章用モデルのID
+ */
 export async function testKey() {
-  const { text } = await ask({ messages: [{ role: 'user', content: '「OK」とだけ答えてください。' }], maxTokens: 2000, effort: 'low' });
-  return text.trim().length > 0;
+  const headers = await authHeaders();
+  let res;
+  try { res = await fetch(`${API_BASE}/models`, { headers: { authorization: headers.authorization } }); } catch { throw new AIError('AIに接続できませんでした。通信の状態を確認して、もう一度お試しください。', 'network'); }
+  if (!res.ok) {
+    let err = null;
+    try { err = (await res.json()).error; } catch { /* ignore */ }
+    throw errorFor(res.status, err);
+  }
+  const data = await res.json();
+  const ids = ((data && data.data) || []).map((m) => m.id)
+    .filter((id) => /^(gpt-|o\d)/.test(id) && !/(image|audio|realtime|tts|transcribe|embedding|search|moderation|instruct|codex)/.test(id))
+    .sort().reverse();
+  await store.setMeta({ aiModels: ids.slice(0, 60) });
+  return ids;
 }
 
 /* =========================================================
