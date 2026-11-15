@@ -77,7 +77,21 @@ export async function seedDemo() {
   }
   await store.setAchievements(unlocked);
   const g = computeGame();
-  await store.setMeta({ lastSeenLevel: g.level, demo: true });
+  // デモ用のAI利用料金（見本です。本物のAIは使っていません）
+  const usage = { since: addDays(today(), -30), days: {}, months: {}, tags: {} };
+  const bump = (map, key, model, n, i, c, o) => { const m = (map[key] ||= {}); const b = (m[model] ||= { n: 0, i: 0, c: 0, o: 0, e: 0 }); b.n += n; b.i += i; b.c += c; b.o += o; };
+  const model = 'gpt-6.1-sol';
+  const tagShare = { coach: 0.6, meal: 0.25, review: 0.08, menu: 0.07 };
+  for (let k = 30; k >= 0; k--) {
+    const dd = addDays(today(), -k);
+    if (r() < 0.35 && k !== 0) continue;
+    const n = 1 + Math.floor(r() * 4);
+    const i = n * (2600 + Math.floor(r() * 1800)); const c = Math.floor(i * 0.35); const o = n * (180 + Math.floor(r() * 260));
+    bump(usage.days, dd, model, n, i, c, o);
+    bump(usage.months, dd.slice(0, 7), model, n, i, c, o);
+    for (const [t, f] of Object.entries(tagShare)) bump(usage.tags, t, model, Math.max(0, Math.round(n * f)), Math.round(i * f), Math.round(c * f), Math.round(o * f));
+  }
+  await store.setMeta({ lastSeenLevel: g.level, demo: true, aiUsage: usage });
 }
 
 function demoPhoto(prog, pose) {

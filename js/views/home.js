@@ -12,7 +12,8 @@ import { openHealthImport } from '../health.js';
 import { todayPlan, planExercises, openPlanSheet } from '../plan.js';
 import { cardioKind, dayEnergy } from '../calc.js';
 import { hasKeySync } from '../ai.js';
-import { openCoach, openWeeklyReview, makeAIMenu, todayAIMenu, clearAIMenu, openAISetup } from '../aiui.js';
+import { openCoach, openWeeklyReview, makeAIMenu, todayAIMenu, clearAIMenu, openAISetup, openUsageSheet } from '../aiui.js';
+import { summarize, fmtYen, fmtUsd, yenRate } from '../aicost.js';
 import { presetCart } from './training.js';
 import { today, addDays, fmtNum, fmtDate, greeting, esc, parseYmd, ymd, pad, diffDays, relDay, byDateDesc } from '../util.js';
 
@@ -41,6 +42,7 @@ export function render(root, app) {
     ${secH('今日のおすすめ', planChip())}
     ${recommendCard(g, p)}
     ${aiCard()}
+    ${usageCard()}
     ${secH('ステータス', '<span class="sec-note">今週の伸び</span>')}
     ${statusCard(g, prevWeek)}
     ${secH(`${Number(t.slice(5, 7))}月の積み重ね`)}
@@ -65,6 +67,8 @@ export function render(root, app) {
       else if (k === 'review') openWeeklyReview();
       else if (k === 'menu') makeAIMenu();
       else if (k === 'setup') openAISetup();
+      else if (k === 'usage') openUsageSheet();
+      else if (k === 'talk') openCoach({ first: '今日食べたものと、やった運動を、順番に聞き取って記録してください。' });
       else if (k === 'menu-clear') clearAIMenu();
       else if (k === 'menu-start') { const m = todayAIMenu(); if (m) { presetCart(m.items); app.go('training', { mode: 'strength' }); } }
       return;
@@ -208,12 +212,40 @@ function aiCard() {
       ${icon('right', 18)}
     </button>
     <div class="ai-actions">
-      <button type="button" data-ai="menu">${icon('dumbbell', 17)}<span>${menu ? 'メニューを作り直す' : '今日のメニューを作る'}</span></button>
+      <button type="button" class="wide" data-ai="talk">${icon('meal', 17)}<span>話して、食事・運動を記録する</span></button>
+      <button type="button" data-ai="menu">${icon('dumbbell', 17)}<span>${menu ? 'メニューを作り直す' : 'メニューを作る'}</span></button>
       <button type="button" data-ai="review">${icon('growth', 17)}<span>今週のふりかえり</span></button>
     </div>
     ${menu ? `<button type="button" class="ai-foot" data-ai="menu-clear">AIのメニューをやめて、いつものおすすめにもどす</button>` : ''}
     ${rv && !menu ? `<p class="ai-last">${icon('growth', 13)}前回のふりかえり：${esc(rv.text.replace(/\s+/g, ' ').slice(0, 44))}…</p>` : ''}
   </section>`;
+}
+
+/** AIの利用料金（今月・今日・累計） */
+function usageCard() {
+  const sm = summarize();
+  if (!hasKeySync() && !sm.any) return '';
+  const rate = yenRate();
+  const labels = sm.last7.map((d) => ['日', '月', '火', '水', '木', '金', '土'][parseYmd(d.date).getDay()]);
+  const vals = sm.last7.map((d) => d.usd * rate);
+  const m = sm.month;
+  return `
+  <button type="button" class="card usage-card" data-ai="usage" aria-label="AIの利用料金をくわしく見る">
+    <div class="usage-top">
+      <div class="usage-main">
+        <span class="usage-label">${icon('spark', 13)}AIの利用料金・${Number(today().slice(5, 7))}月</span>
+        <p class="usage-yen num"><small>約</small>${fmtYen(m.usd, rate)}<small>円</small></p>
+        <span class="usage-usd">${fmtUsd(m.usd)}${m.unknown ? ' ＋料金不明あり' : ''}</span>
+      </div>
+      <div class="usage-bars">${miniBars(vals, { labels, color: '#9C8CE6', highlight: 6, hiColor: '#6A58C2', height: 56 })}</div>
+    </div>
+    <div class="usage-stats">
+      <div><span>今日</span><b class="num">約${fmtYen(sm.today.usd, rate)}円</b></div>
+      <div><span>累計</span><b class="num">約${fmtYen(sm.total.usd, rate)}円</b></div>
+      <div><span>今月の回数</span><b class="num">${m.n}回</b></div>
+    </div>
+    <p class="fine">OpenAIの料金表で計算した目安です。タップで、くわしく見られます。</p>
+  </button>`;
 }
 
 /** 「今日のおすすめ」の横に出す、今日の予定 */

@@ -51,14 +51,14 @@ onSwipeDelete(async (storeName, id) => {
 });
 
 export function workoutRow(w) {
-  return row({ ic: 'dumbbell', title: esc(w.exerciseName), sub: workoutText(w), right: `${fmtNum(workoutKcal(w))}<small>kcal</small>`, attrs: `data-edit="workouts" data-id="${w.id}"`, edit: { store: 'workouts', id: w.id } });
+  return row({ ic: 'dumbbell', title: esc(w.exerciseName), sub: `${workoutText(w)}${w.source === 'ai' ? ' ・ <span class="src-tag ai">AI</span>' : ''}`, right: `${fmtNum(workoutKcal(w))}<small>kcal</small>`, attrs: `data-edit="workouts" data-id="${w.id}"`, edit: { store: 'workouts', id: w.id } });
 }
 export function cardioRow(c) {
   const k = cardioKind(c.kind);
-  return row({ ic: k.icon, title: c.label ? esc(c.label) : k.name, sub: `${cardioText(c)}${c.source === 'health' ? ' ・ <span class="src-tag">Apple Watch</span>' : ''}`, right: `${fmtNum(cardioRecordKcal(c))}<small>kcal</small>`, attrs: `data-edit="cardio" data-id="${c.id}"`, edit: { store: 'cardio', id: c.id }, color: 'var(--blue)' });
+  return row({ ic: k.icon, title: c.label ? esc(c.label) : k.name, sub: `${cardioText(c)}${c.source === 'health' ? ' ・ <span class="src-tag">Apple Watch</span>' : ''}${c.source === 'ai' ? ' ・ <span class="src-tag ai">AI</span>' : ''}`, right: `${fmtNum(cardioRecordKcal(c))}<small>kcal</small>`, attrs: `data-edit="cardio" data-id="${c.id}"`, edit: { store: 'cardio', id: c.id }, color: 'var(--blue)' });
 }
 export function mealRow(m) {
-  return row({ ic: SLOT_ICON[m.slot] || 'meal', title: m.slot === 'protein' ? 'プロテイン' : (esc(m.content) || SLOT_LABEL[m.slot]), sub: `${SLOT_LABEL[m.slot] || ''}${m.fat ? ` ・ 脂質${fmtNum(m.fat, 1)}g` : ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}`, right: `${fmtNum(m.protein || 0, 1)}<small>g</small>`, attrs: `data-edit="meals" data-id="${m.id}"`, edit: { store: 'meals', id: m.id }, color: 'var(--gold-deep)' });
+  return row({ ic: SLOT_ICON[m.slot] || 'meal', title: m.slot === 'protein' ? 'プロテイン' : (esc(m.content) || SLOT_LABEL[m.slot]), sub: `${SLOT_LABEL[m.slot] || ''}${m.fat ? ` ・ 脂質${fmtNum(m.fat, 1)}g` : ''}${m.kcal ? ` ・ ${fmtNum(m.kcal)}kcal` : ''}${m.source === 'ai' ? ' ・ <span class="src-tag ai">AI</span>' : ''}`, right: `${fmtNum(m.protein || 0, 1)}<small>g</small>`, attrs: `data-edit="meals" data-id="${m.id}"`, edit: { store: 'meals', id: m.id }, color: 'var(--gold-deep)' });
 }
 export function bodyRow(b) {
   const parts = bodyText(b).split(' ・ ');
@@ -127,7 +127,7 @@ export function editWorkout(w) {
   const repVals = unit === 'sec' ? [20, 30, 45, 60, 90, 120] : [5, 8, 10, 12, 15, 20, 30];
   openSheet({
     title: esc(w.exerciseName),
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form" onsubmit="return false">${healthNote(w)}
       <div class="field"><span class="field-label">日付</span>${dateField('date', w.date)}</div>
       <div class="field"><span class="field-label">${unit === 'sec' ? '時間（1セット）' : '回数（1セット）'}</span>
         ${stepper('reps', w.reps, { step: unit === 'sec' ? 5 : 1, min: 1, max: 1000, unit: unitLabel(unit) })}
@@ -185,6 +185,7 @@ export function updateCardioEstimate(root) {
 
 /** ヘルスケアから取り込んだ記録につける説明 */
 function healthNote(rec) {
+  if (rec.source === 'ai') return `<div class="src-note ai">${icon('spark', 15)}<span>AIコーチが会話から記録しました。数字は見積もりなので、ちがっていたら直してください。</span></div>`;
   if (rec.source !== 'health') return '';
   return `<div class="src-note">${icon('heart', 15)}<span>${rec.edited ? 'ヘルスケアから取り込んで、あなたが修正した記録です。' : 'ヘルスケア（Apple Watch）から取り込んだ記録です。'}ここで直した内容は、次に取り込んでも上書きされません。</span></div>`;
 }
@@ -293,7 +294,7 @@ export function mealEditor({ rec = null, slot = 'breakfast', date = today() } = 
   const recents = isNew ? recentMeals(m.slot) : [];
   openSheet({
     title: isNew ? `${SLOT_LABEL[m.slot]}を記録` : (isShake ? 'プロテイン' : `${SLOT_LABEL[m.slot]}の記録`),
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form" onsubmit="return false">${isNew ? '' : healthNote(m)}
       ${recents.length ? `<div class="field"><span class="field-label">最近の食事からワンタップ</span>
         <div class="suggest">${recents.map((r) => `<button type="button" class="suggest-chip" data-fill="${r.id}"><span>${esc(r.content)}</span><small>P${fmtNum(r.protein || 0, 1)}${r.fat ? ` F${fmtNum(r.fat, 1)}` : ''}</small></button>`).join('')}</div></div>` : ''}
       ${!isShake ? `<div class="ai-meal">

@@ -681,11 +681,11 @@ body.demo .page { padding-top: 10px; }
 .badge { font-size: 10.5px; background: var(--gold-soft); color: var(--gold-deep); padding: 2px 8px; border-radius: 99px; font-weight: 700; }
 
 /* ---------- ボトムシート ---------- */
-.sheet-wrap { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
+.sheet-wrap { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100%); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
 .sheet-backdrop { position: absolute; inset: 0; background: rgba(15, 25, 22, .38); opacity: 0; transition: opacity .35s ease; }
 .sheet-wrap.open .sheet-backdrop { opacity: var(--fade, 1); }
 .sheet {
-  position: relative; width: 100%; max-width: 560px; max-height: calc(100dvh - var(--safe-t) - 24px); background: var(--bg);
+  position: relative; width: 100%; max-width: 560px; max-height: calc(var(--vvh, 100dvh) - var(--safe-t) - 24px); background: var(--bg);
   border-radius: 28px 28px 0 0; padding: 0 16px calc(var(--safe-b) + 18px);
   display: flex; flex-direction: column; transform: translateY(105%); transition: transform .48s var(--ease);
   box-shadow: 0 -12px 50px rgba(0, 0, 0, .14);
@@ -701,6 +701,8 @@ body.demo .page { padding-top: 10px; }
 .sheet-titles p b { color: var(--primary-deep); font-family: var(--font-num); }
 .sheet-close { width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--fill); color: var(--ink-2); display: grid; place-items: center; flex-shrink: 0; }
 .sheet-close:active { transform: scale(.9); }
+/* シートの中身が縦に長くても、一覧などの箱がつぶれないようにする（チャットだけは例外：中のスクロール部分が縮む） */
+.sheet:not(.sheet-chat) .sheet-body > * { flex-shrink: 0; }
 .sheet-body { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px; padding-bottom: 4px; }
 .sheet .form { background: var(--surface); border-radius: 20px; padding: 16px; box-shadow: var(--shadow); }
 .sheet-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 4px; }
@@ -1056,7 +1058,13 @@ body.viewer-open #tabbar { opacity: 0; pointer-events: none; }
 .ai-actions button:active { transform: scale(.95); }
 .ai-foot { border: 0; background: none; font-size: 12px; color: var(--ink-3); padding: 6px; text-decoration: underline; }
 .ai-last { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-3); padding: 2px 10px 8px; }
-.chat { display: flex; flex-direction: column; gap: 10px; min-height: 34dvh; }
+/* チャットの画面：高さを固定して、メッセージの部分だけをスクロールさせる（入力バーは下に固定） */
+.sheet-chat { height: calc(var(--vvh, 100dvh) - var(--safe-t) - 24px); }
+.kbd .sheet-chat { padding-bottom: 8px; }
+.sheet-chat .sheet-body { flex: 1 1 auto; min-height: 0; overflow: hidden; gap: 8px; padding-bottom: 0; }
+.chat-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; padding: 2px 2px 8px; scroll-behavior: auto; }
+.chat-scroll:not(.is-empty) > :first-child { margin-top: auto; }
+.chat-scroll.is-empty { justify-content: center; }
 .chat-list { display: flex; flex-direction: column; gap: 8px; }
 .chat-msg { display: flex; }
 .chat-msg.user { justify-content: flex-end; }
@@ -1071,11 +1079,11 @@ body.viewer-open #tabbar { opacity: 0; pointer-events: none; }
 .chat-hello p { font-size: 13.5px; color: var(--ink-2); line-height: 1.65; max-width: 290px; }
 .chat-suggest { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .chat-suggest[hidden] { display: none; }
-.chat-input { position: sticky; bottom: 0; display: flex; align-items: flex-end; gap: 8px; background: var(--bg); padding: 6px 0 2px; }
+.chat-input { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px; background: var(--bg); padding: 4px 0 0; }
 .chat-input textarea { resize: none; background: var(--surface); border-radius: 20px; padding: 11px 14px; line-height: 1.5; max-height: 120px; }
 .chat-send { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--primary); color: #fff; display: grid; place-items: center; flex-shrink: 0; box-shadow: 0 6px 14px -4px rgba(31, 128, 112, .5); }
 .chat-send:active { transform: scale(.9); }
-.chat-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--ink-3); }
+.chat-foot { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--ink-3); padding-bottom: 2px; }
 .chat-foot .link { font-size: 11.5px; color: var(--ink-3); font-weight: 600; }
 .review { display: flex; flex-direction: column; gap: 8px; }
 .review-date { font-size: 12px; color: var(--ink-3); font-weight: 700; padding: 0 4px; }
@@ -1092,3 +1100,56 @@ body.viewer-open #tabbar { opacity: 0; pointer-events: none; }
 .ai-meal-note[hidden] { display: none; }
 .ai-meal-note .ic { margin-top: 2px; }
 ul.steps { list-style: disc; }
+
+/* ---------- 会話の中の「記録しました」カード ---------- */
+.chat-hello p b { color: var(--ink); }
+.chat-hello p.sub { font-size: 12px; color: var(--ink-3); }
+.suggest-chip.accent { background: #EFEBFB; box-shadow: inset 0 0 0 1px #D9D2F4; color: #4B3FA0; font-weight: 700; }
+.act-card { align-self: flex-start; width: min(94%, 360px); display: flex; align-items: center; gap: 10px; background: var(--surface); border-radius: 18px; padding: 10px 10px 10px 12px; box-shadow: var(--shadow), inset 0 0 0 1.5px #D5EEE8; animation: viewIn .3s var(--ease) both; }
+.act-card.gone { background: var(--fill-2); box-shadow: none; opacity: .75; }
+.act-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.4; }
+.act-text .k { font-size: 11px; font-weight: 700; color: var(--primary); }
+.act-card.gone .act-text .k { color: var(--ink-3); }
+.act-text strong { font-size: 14px; overflow-wrap: anywhere; }
+.act-text span { font-size: 12px; color: var(--ink-3); }
+.act-btns { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.act-btn { border: 0; background: var(--fill); color: var(--ink-2); border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 5px 11px; white-space: nowrap; transition: transform .15s var(--ease); }
+.act-btn:active { transform: scale(.93); }
+.act-btn.danger { color: var(--danger); background: #FBE7E5; }
+.act-note { align-self: center; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-3); background: var(--fill-2); border-radius: 999px; padding: 5px 12px; max-width: 94%; }
+.act-note.warn { color: var(--amber); background: #FBEAE0; }
+.src-tag.ai { color: #5A4AB5; background: #ECE8FA; }
+
+/* ---------- AIの利用料金 ---------- */
+.usage-card { color: inherit; gap: 12px; width: 100%; transition: transform .18s var(--ease); }
+.usage-card:active { transform: scale(.985); }
+.usage-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
+.usage-main { display: flex; flex-direction: column; min-width: 0; }
+.usage-label { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; color: #5A4AB5; }
+.usage-yen { font-size: 34px; font-weight: 700; line-height: 1.15; color: var(--ink); }
+.usage-yen small { font-family: var(--font); font-size: 14px; font-weight: 700; color: var(--ink-3); margin: 0 2px; }
+.usage-usd { font-size: 12px; color: var(--ink-3); }
+.usage-bars { width: 46%; min-width: 120px; flex-shrink: 0; }
+.usage-stats { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--surface-2); border-radius: 14px; padding: 9px 0; }
+.usage-stats div { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.usage-stats div + div { border-left: .5px solid var(--sep); }
+.usage-stats span { font-size: 11px; color: var(--ink-3); font-weight: 600; }
+.usage-stats b { font-size: 15px; }
+.u-hero { background: linear-gradient(135deg, #EFEBFB, #E6F3F0); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.u-hero span { font-size: 12.5px; font-weight: 700; color: #5A4AB5; }
+.u-hero b { font-size: 38px; line-height: 1.15; }
+.u-hero small { font-size: 12px; color: var(--ink-3); }
+.u-h { font-size: 12.5px; font-weight: 700; color: var(--ink-2); padding: 6px 4px 0; }
+.u-group { box-shadow: inset 0 0 0 1px var(--sep); }
+.u-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; background: var(--surface); position: relative; }
+.u-row + .u-row::before { content: ''; position: absolute; top: 0; left: 14px; right: 0; height: .5px; background: var(--sep); }
+.u-name { display: flex; flex-direction: column; font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.u-name small { font-size: 11.5px; color: var(--ink-3); font-weight: 500; }
+.u-val { display: flex; flex-direction: column; align-items: flex-end; text-align: right; flex-shrink: 0; }
+.u-val b { font-size: 15px; }
+.u-val small { font-size: 11px; color: var(--ink-3); }
+.u-form { background: var(--surface); border-radius: 20px; padding: 14px; box-shadow: var(--shadow); }
+.ai-actions button.wide { grid-column: 1 / -1; background: #fff; color: #4B3FA0; box-shadow: 0 0 0 1.5px #D9D2F4; }
+.src-note.ai { background: #ECE8FA; color: #4B3FA0; }
+.chat-foot .link { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.chat-foot span { text-align: right; }

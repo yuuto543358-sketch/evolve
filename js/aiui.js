@@ -3,11 +3,14 @@ import * as db from './db.js';
 import * as store from './store.js';
 import { S } from './store.js';
 import { icon } from './icons.js';
-import { openSheet, toast, choice, val } from './ui.js';
+import { openSheet, toast, choice, val, num, stepper, confirmDialog } from './ui.js';
 import * as ai from './ai.js';
 import { notify, app } from './app.js';
-import { today, esc, fmtDateLong } from './util.js';
+import { today, esc, fmtDateLong, fmtNum } from './util.js';
+import * as cost from './aicost.js';
 import { loadImage } from './photos.js';
+import { TOOLS, RECORD_RULES, runTool, undoRecord, toApiMessages, sanitizeHistory, trimHistory, recSummary } from './aitools.js';
+import { mealEditor, editWorkout, editCardio } from './records.js';
 
 /** 選べるAIの種類：おすすめ3つ＋このキーで使えるもの */
 function modelOptions() {
@@ -77,6 +80,8 @@ export async function openAISetup({ onReady = null } = {}) {
           <li>OpenAIの「Billing」で自動チャージ（Auto recharge）をオフにしておくと、入れたクレジットがなくなったら止まるので安心です</li>
           <li>APIキーは<b>このiPhoneの中にだけ</b>保存します。バックアップファイルには入りません。ほかの人には教えないでください</li>
           <li>AIを使うときは、相談の内容と、あなたの記録のまとめ（体重・運動・食事など）がOpenAIのAIに送られます</li>
+          <li>コーチとの会話で話した食事や運動は、AIが自動で記録します。記録は会話の中の「修正」「取り消す」で、いつでも直せます</li>
+          <li>利用料金は、ホームの「AIの利用料金」で目安を確かめられます</li>
           <li>AIの答えは参考です。体調に不安があるときは、無理をせず専門家に相談してください</li>
         </ul>
       </div>`,
@@ -125,79 +130,174 @@ export async function openAISetup({ onReady = null } = {}) {
   });
 }
 
-/* ---------- AIコーチに相談 ---------- */
-const SUGGEST = ['今日は何をすればいい？', '最近の記録を見て、アドバイスして', 'タンパク質を増やすコツは？', 'お腹まわりを引き締めるには？'];
+/* ---------- AIコーチに相談（会話の中で、そのまま記録もできる） ---------- */
+const SUGGEST = [
+  { text: '今日食べたものを話して、記録する', send: '今日食べたものを、聞き取って記録してください。', accent: true },
+  { text: '今日の運動を話して、記録する', send: '今日やった運動を、聞き取って記録してください。', accent: true },
+  { text: '今日は何をすればいい？' },
+  { text: '最近の記録を見て、アドバイスして' },
+];
+
+const HELLO = `<div class="chat-hello">${icon('spark', 22)}
+  <p><b>「昼にラーメンを食べた」「スクワットを30回3セットやった」</b>と話しかけると、そのまま記録します。足りないことは、こちらから聞きます。</p>
+  <p class="sub">運動・食事・体重の相談もできます。キーボードのマイクボタンを使うと、声でも話せます。</p></div>`;
+
+const KIND_ICON = { meals: 'meal', workouts: 'dumbbell', cardio: 'run' };
+const KIND_COLOR = { meals: '#C99B47', workouts: '#1F8070', cardio: '#3B7FA8' };
+
+/** 会話の中の「記録しました」カード。いまの記録の中身を見て作るので、あとで直した内容もそのまま映る */
+function cardHTML(m) {
+  const ui = m.ui;
+  if (!ui) return '';
+  if (ui.type === 'note') return `<div class="act-note ${esc(ui.tone || '')}">${icon('info', 13)}<span>${esc(ui.text)}</span></div>`;
+  const rec = (S[ui.kind] || []).find((r) => r.id === ui.id);
+  if (!rec) return `<div class="act-card gone"><span class="ic-sq" style="--sq:#B5BCBA">${icon('trash', 15)}</span><span class="act-text"><small class="k">この記録は削除されました</small><span>${esc(ui.summary || '')}</span></span></div>`;
+  const sm = recSummary(ui.kind, rec);
+  return `<div class="act-card" data-call="${esc(m.tool_call_id)}">
+    <span class="ic-sq" style="--sq:${KIND_COLOR[ui.kind]}">${icon(KIND_ICON[ui.kind], 16)}</span>
+    <span class="act-text"><small class="k">${esc(sm.label)}を${ui.op === 'update' ? '修正' : '記録'}しました</small><strong>${esc(sm.main)}</strong><span>${esc(sm.sub)}</span></span>
+    <span class="act-btns"><button type="button" class="act-btn" data-act-edit>修正</button>${ui.op === 'create' ? '<button type="button" class="act-btn danger" data-act-undo>取り消す</button>' : ''}</span>
+  </div>`;
+}
+
+function renderMsg(m) {
+  if (m.role === 'user') return `<div class="chat-msg user"><div class="chat-bubble">${esc(m.content).replace(/\n/g, '<br>')}</div></div>`;
+  if (m.role === 'assistant') return m.content ? `<div class="chat-msg assistant"><div class="chat-bubble">${mdLite(m.content)}</div></div>` : '';
+  if (m.role === 'tool') return cardHTML(m);
+  return '';
+}
+
+function openRecordEditor(kind, rec) {
+  if (kind === 'meals') mealEditor({ rec });
+  else if (kind === 'workouts') editWorkout(rec);
+  else editCardio(rec);
+}
 
 export function openCoach({ first = null } = {}) {
   return withKey(async () => {
-    let history = (await db.kvGet('aiChat')) || [];
+    let history = sanitizeHistory((await db.kvGet('aiChat')) || []);
     let busy = false; let ctrl = null;
-    const bubble = (m) => `<div class="chat-msg ${m.role}"><div class="chat-bubble">${m.role === 'assistant' ? mdLite(m.content) : esc(m.content).replace(/\n/g, '<br>')}</div></div>`;
+    let unsub = () => {}; let detach = () => {};
     openSheet({
       title: 'AIコーチ',
-      subtitle: 'あなたの記録を見たうえで答えます',
-      onClose() { if (ctrl) ctrl.abort(); },
+      subtitle: '記録も、話しかけるだけでOK',
+      cls: 'sheet-chat',
+      onClose() { if (ctrl) ctrl.abort(); unsub(); detach(); },
       html: `
-        <div class="chat" data-chat>
+        <div class="chat-scroll" data-scroll>
           <div class="chat-list" data-list></div>
-          <div class="chat-suggest" data-suggest>${SUGGEST.map((s) => `<button type="button" class="suggest-chip" data-s="${esc(s)}"><span>${esc(s)}</span></button>`).join('')}</div>
+          <div class="chat-suggest" data-suggest>${SUGGEST.map((x) => `<button type="button" class="suggest-chip ${x.accent ? 'accent' : ''}" data-s="${esc(x.send || x.text)}"><span>${esc(x.text)}</span></button>`).join('')}</div>
         </div>
         <div class="chat-input">
-          <textarea class="input" name="msg" rows="1" placeholder="コーチに聞いてみる" enterkeyhint="send"></textarea>
+          <textarea class="input" name="msg" rows="1" placeholder="例：昼にラーメンを食べた" enterkeyhint="send"></textarea>
           <button type="button" class="chat-send" data-send aria-label="送信">${icon('right', 20)}</button>
         </div>
-        <div class="chat-foot"><button type="button" class="link" data-clear>${icon('trash', 13)}会話を消して最初から</button><span>答えは参考です。記録のまとめをAIに送ります</span></div>`,
-      onMount(body, close) {
+        <div class="chat-foot"><button type="button" class="link" data-clear>${icon('trash', 13)}会話を消す</button><span>答えは参考です（記録のまとめをAIに送ります）</span></div>`,
+      onMount(body) {
+        const scroller = body.querySelector('[data-scroll]');
         const list = body.querySelector('[data-list]');
         const input = body.querySelector('[name=msg]');
-        const scroller = body;
+        const suggest = body.querySelector('[data-suggest]');
+        // 下のほうを見ているときだけ、新しい文章に合わせて自動で下までスクロールする
+        let stick = true;
+        scroller.addEventListener('scroll', () => { stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90; }, { passive: true });
+        const follow = (force = false) => { if (force) stick = true; if (stick) scroller.scrollTop = scroller.scrollHeight; };
+        const resize = () => { input.style.height = 'auto'; input.style.height = `${Math.min(120, input.scrollHeight)}px`; };
         const draw = () => {
-          list.innerHTML = history.length ? history.map(bubble).join('') : `<div class="chat-hello">${icon('spark', 22)}<p>こんにちは。運動・食事・体重のことなど、なんでも聞いてください。</p></div>`;
-          body.querySelector('[data-suggest]').hidden = history.length > 0;
-          scroller.scrollTop = scroller.scrollHeight;
+          const empty = history.length === 0;
+          scroller.classList.toggle('is-empty', empty);
+          list.innerHTML = empty ? HELLO : history.map(renderMsg).join('');
+          suggest.hidden = !empty;
+          follow();
         };
-        const send = async (text) => {
-          text = (text || '').trim();
+
+        const send = async (raw) => {
+          const text = (raw || '').trim();
           if (!text || busy) return;
-          busy = true; input.value = ''; input.style.height = '';
+          busy = true;
+          input.value = ''; resize();
           history.push({ role: 'user', content: text });
-          draw();
-          const holder = document.createElement('div');
-          holder.className = 'chat-msg assistant';
-          holder.innerHTML = '<div class="chat-bubble typing"><i></i><i></i><i></i></div>';
-          list.appendChild(holder);
-          scroller.scrollTop = scroller.scrollHeight;
-          const bub = holder.querySelector('.chat-bubble');
+          const before = history.length;
+          draw(); follow(true);
           ctrl = new AbortController();
+          let holder = null;
+          let made = 0; let fixed = 0;
           try {
-            const { text: answer } = await ai.streamText({
-              system: `${ai.COACH_SYSTEM}\n\n<ユーザーの記録>\n${ai.buildContext()}\n${ai.weekSummary()}\n</ユーザーの記録>`,
-              messages: history.slice(-20).map((m) => ({ role: m.role, content: m.content })),
-              signal: ctrl.signal,
-              onText: (_, full) => {
-                bub.classList.remove('typing');
-                bub.innerHTML = mdLite(full);
-                scroller.scrollTop = scroller.scrollHeight;
+            await ai.runChat({
+              system: `${ai.COACH_SYSTEM}\n\n${RECORD_RULES}\n\n<ユーザーの記録>\n${ai.buildContext()}\n${ai.weekSummary()}\n</ユーザーの記録>`,
+              messages: history, tools: TOOLS, toApi: toApiMessages, execute: runTool, signal: ctrl.signal, tag: 'coach',
+              onRound: () => {
+                holder = document.createElement('div');
+                holder.className = 'chat-msg assistant';
+                holder.innerHTML = '<div class="chat-bubble typing"><i></i><i></i><i></i></div>';
+                list.appendChild(holder); follow();
+              },
+              onText: (full) => {
+                if (!holder) return;
+                const b = holder.firstChild;
+                b.classList.remove('typing');
+                b.innerHTML = mdLite(full);
+                follow();
+              },
+              onMessage: (m) => {
+                if (m.role === 'assistant') {
+                  if (!m.content && holder) holder.remove(); // 文章なしで道具だけ呼んだときは、入力中の表示を消す
+                  holder = null;
+                } else if (m.role === 'tool') {
+                  if (m.ui && m.ui.type === 'rec') { if (m.ui.op === 'update') fixed++; else made++; }
+                  const html = cardHTML(m);
+                  if (html) { list.insertAdjacentHTML('beforeend', html); follow(); }
+                }
               },
             });
-            history.push({ role: 'assistant', content: answer || '（答えが空でした。もう一度聞いてみてください）' });
-            history = history.slice(-40);
-            await db.kvSet('aiChat', history);
-            draw();
           } catch (err) {
-            history.pop();
-            draw();
-            input.value = text;
+            if (holder) holder.remove();
+            // 何も記録されていないときは、入力した文章をもどす（記録されたものがあるときは会話に残す）
+            if (history.length === before) { history.pop(); input.value = text; resize(); }
             showError(err);
-          } finally { busy = false; ctrl = null; }
+          } finally {
+            busy = false; ctrl = null;
+            history = trimHistory(history);
+            try { await db.kvSet('aiChat', history); } catch { /* 保存できなくても続ける */ }
+            if (list.isConnected) draw();
+            if (made + fixed) await notify({ message: made ? `AIが${made}件を記録しました` : '記録を直しました', silentXP: !made });
+          }
         };
+
         body.addEventListener('click', async (e) => {
-          const s = e.target.closest('[data-s]');
-          if (s) { send(s.dataset.s); return; }
+          const sg = e.target.closest('[data-s]');
+          if (sg) { send(sg.dataset.s); return; }
           if (e.target.closest('[data-send]')) { send(input.value); return; }
-          if (e.target.closest('[data-clear]')) { history = []; await db.kvSet('aiChat', []); draw(); }
+          if (e.target.closest('[data-clear]')) {
+            if (busy) return;
+            history = []; await db.kvSet('aiChat', []); draw();
+            return;
+          }
+          const card = e.target.closest('.act-card[data-call]');
+          if (!card) return;
+          const m = history.find((x) => x.role === 'tool' && x.tool_call_id === card.dataset.call);
+          const ui = m && m.ui;
+          if (!ui || ui.type !== 'rec') return;
+          if (e.target.closest('[data-act-edit]')) {
+            const rec = (S[ui.kind] || []).find((r) => r.id === ui.id);
+            if (rec) openRecordEditor(ui.kind, rec);
+          } else if (e.target.closest('[data-act-undo]')) {
+            await undoRecord(ui);
+            await notify({ message: '取り消しました', silentXP: true });
+          }
         });
-        input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${Math.min(120, input.scrollHeight)}px`; });
+        input.addEventListener('input', resize);
+        // Enter（送信キー）で送る。日本語の変換を確定するEnterでは送らない
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(input.value); }
+        });
+        // 記録を直したり消したりしたとき、会話の中のカードも新しくする
+        unsub = store.onChange(() => { if (!busy && list.isConnected) draw(); });
+        // キーボードが出たり消えたりして画面の高さが変わったら、下までスクロールし直す
+        const vv = window.visualViewport;
+        const onVV = () => follow();
+        if (vv) vv.addEventListener('resize', onVV);
+        detach = () => { if (vv) vv.removeEventListener('resize', onVV); };
         draw();
         if (first) send(first);
       },
@@ -286,7 +386,7 @@ export function makeAIMenu() {
       const r = await ai.askJSON({
         system: `${ai.COACH_SYSTEM}\n\nあなたは今日1日ぶんのトレーニングメニューを作り、JSONで返します。\n- 「登録している筋トレ種目」の名前だけを使う。\n- 回数とセット数は、その種目の前回の記録を基準に、同じか少しだけ多くする。未実施の種目は軽めから。\n- 今日の予定、直近数日の運動の内容（同じ部位が続いていないか）、疲れ具合を考える。\n- 時間がない日・疲れている日は、1〜2種目や休養でもよい。無理をさせない。\n- 種目は多くても4つまで。\n\n<ユーザーの記録>\n${ai.buildContext({ days: 10 })}\n</ユーザーの記録>`,
         messages: [{ role: 'user', content: '今日のトレーニングメニューを作ってください。' }],
-        schema, effort: 'medium',
+        schema, effort: 'medium', tag: 'menu',
       });
       const items = (r.items || []).map((it) => {
         const ex = S.exercises.find((x) => x.name === it.exercise);
@@ -344,7 +444,7 @@ export async function estimateMeal({ text = '', file = null }) {
     const r = await ai.askJSON({
       system: 'あなたは日本の食事にくわしい栄養の見積もり係です。答えはJSONで返します。ユーザーが食べたものの説明や写真から、1食ぶんのタンパク質・脂質・カロリーを現実的な数字で見積もります。量が書かれていないときは、日本の一般的な1人前を仮定します。外食チェーンやコンビニの定番商品は、よく知られている栄養成分に近い数字にします。数字は目安なので、細かすぎる端数にはしません。食べたことを評価したり注意したりはしません。',
       messages: [{ role: 'user', content }],
-      schema: MEAL_SCHEMA, effort: 'low',
+      schema: MEAL_SCHEMA, effort: 'low', tag: 'meal',
     });
     const n = (v, max) => Math.max(0, Math.min(max, Math.round(Number(v) || 0)));
     return { name: String(r.name || text || '食事').slice(0, 40), protein: n(r.protein_g, 300), fat: n(r.fat_g, 300), kcal: Math.round(n(r.kcal, 5000) / 10) * 10, comment: String(r.comment || '').slice(0, 80) };
@@ -352,3 +452,79 @@ export async function estimateMeal({ text = '', file = null }) {
 }
 
 export { notify };
+
+
+/* ---------- AIの利用料金（くわしく） ---------- */
+function usageHTML() {
+  const sm = cost.summarize();
+  const rate = cost.yenRate();
+  const yen = (usd) => `約${cost.fmtYen(usd, rate)}円`;
+  const cell = (b) => `<b class="num">${yen(b.usd)}</b><small>${cost.fmtUsd(b.usd)}${b.unknown ? '＋料金不明' : ''}</small>`;
+  const period = (label, b) => `<div class="u-row"><span class="u-name">${label}<small>${b.n}回 ・ ${cost.fmtTokens(b.i + b.o)}トークン</small></span><span class="u-val">${cell(b)}</span></div>`;
+  const model = ai.modelId();
+  const pr = cost.priceFor(model) || { in: '', cached: '', out: '' };
+  const estNote = sm.total.e ? `<p class="hint">※ ${sm.total.e}回ぶんは、通信が途中で切れて使った量が分からなかったため、文字数から推定して足しています。</p>` : '';
+  return `
+    <div class="u-hero">
+      <span>${Number(today().slice(5, 7))}月の利用料金</span>
+      <b class="num">${yen(sm.month.usd)}</b>
+      <small>${cost.fmtUsd(sm.month.usd)} ・ ${sm.month.n}回${sm.month.unknown ? ' ・ 料金不明のモデルあり' : ''}</small>
+    </div>
+    <div class="group u-group">
+      ${period('今日', sm.today)}
+      ${period('今月', sm.month)}
+      ${period('先月', sm.prevMonth)}
+      ${period(`累計${sm.since ? `（${fmtDateLong(sm.since).replace(/（.）/, '')}から）` : ''}`, sm.total)}
+    </div>
+    ${sm.tags.length ? `<p class="u-h">機能ごと（累計）</p><div class="group u-group">${sm.tags.map((t) => `<div class="u-row"><span class="u-name">${esc(cost.TAG_LABEL[t.tag] || t.tag)}<small>${t.n}回</small></span><span class="u-val">${cell(t)}</span></div>`).join('')}</div>` : ''}
+    ${sm.models.length ? `<p class="u-h">AIの種類ごと（累計）</p><div class="group u-group">${sm.models.map((m) => `<div class="u-row"><span class="u-name">${esc(m.model)}<small>${m.n}回 ・ 入力${cost.fmtTokens(m.i)} 出力${cost.fmtTokens(m.o)}</small></span><span class="u-val">${m.known ? cell({ usd: m.usd }) : '<b class="num">料金不明</b><small>下で単価を入れてください</small>'}</span></div>`).join('')}</div>` : ''}
+    ${estNote}
+    <p class="u-h">料金の計算（目安）</p>
+    <form class="form u-form" onsubmit="return false">
+      <p class="hint top">いま使っているAI「${esc(model)}」の単価（100万トークンあたり・ドル）です。OpenAIの料金表が変わったときや、料金不明と出たときは、ここで直せます。</p>
+      <div class="field"><span class="field-label">入力 <em>送った文章</em></span>${stepper('pin', pr.in, { step: 0.05, min: 0, max: 1000, unit: '$', decimals: 2, placeholder: '0' })}</div>
+      <div class="field"><span class="field-label">入力（キャッシュ） <em>空欄＝入力と同じ</em></span>${stepper('pcache', pr.cached, { step: 0.01, min: 0, max: 1000, unit: '$', decimals: 2, placeholder: '' })}</div>
+      <div class="field"><span class="field-label">出力 <em>AIの答え</em></span>${stepper('pout', pr.out, { step: 0.1, min: 0, max: 1000, unit: '$', decimals: 2, placeholder: '0' })}</div>
+      <div class="field"><span class="field-label">1ドルは何円で計算する？</span>${stepper('rate', rate, { step: 1, min: 50, max: 400, unit: '円', decimals: 0 })}</div>
+      <div class="sheet-actions"><button type="button" class="btn btn-ghost" data-price-reset>初期値にもどす</button><button type="button" class="btn btn-primary" data-price-save>保存する</button></div>
+    </form>
+    <p class="fine">料金は「使ったトークン数 × 単価」で計算した目安です。実際の請求額は、OpenAIのサイトの「Usage」「Billing」で確かめてください。このアプリを入れていない端末や、ほかのアプリでAPIキーを使った分は含まれません。</p>
+    <button type="button" class="btn btn-text-danger" data-usage-reset>${icon('trash', 16)}利用料金の記録をリセットする</button>`;
+}
+
+export function openUsageSheet() {
+  openSheet({
+    title: 'AIの利用料金',
+    subtitle: 'OpenAIの料金表で計算した目安です',
+    html: usageHTML(),
+    onMount(body, close) {
+      body.addEventListener('click', async (e) => {
+        const model = ai.modelId();
+        if (e.target.closest('[data-price-save]')) {
+          const pin = num(body, 'pin'); const pout = num(body, 'pout'); const pc = num(body, 'pcache'); const rate = num(body, 'rate');
+          if (pin === null || pout === null) { toast('入力と出力の単価を入れてください', { icon: 'info' }); return; }
+          await store.setSettings({
+            yenRate: rate || cost.DEFAULT_YEN_RATE,
+            aiPrices: { ...(S.settings.aiPrices || {}), [model]: { in: pin, cached: pc, out: pout } },
+          });
+          close();
+          toast('料金の計算を保存しました', { icon: 'check' });
+          app.refresh();
+        } else if (e.target.closest('[data-price-reset]')) {
+          const prices = { ...(S.settings.aiPrices || {}) };
+          delete prices[model];
+          await store.setSettings({ aiPrices: prices });
+          close();
+          toast('単価を初期値にもどしました', { icon: 'check' });
+          app.refresh();
+        } else if (e.target.closest('[data-usage-reset]')) {
+          if (!(await confirmDialog('利用料金の記録をリセットしますか？<br><small>このアプリに残っている記録だけが消えます。OpenAIの請求には影響しません。</small>', { ok: 'リセットする', danger: true }))) return;
+          await cost.resetUsage();
+          close();
+          toast('記録をリセットしました', { icon: 'check' });
+          app.refresh();
+        }
+      });
+    },
+  });
+}

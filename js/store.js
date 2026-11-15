@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { uid, today } from './util.js';
 
-export const APP_VERSION = '1.8.0';
+export const APP_VERSION = '1.9.0';
 export const SCHEMA_VERSION = 1;
 
 export const DEFAULT_SETTINGS = {
@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   mets: { run: 8.3, walk: 3.5, cycle: 6.8, other: 4.0 }, // 速度不明時のMETs
   useSpeedMets: true,           // 距離と時間から速度を求めてMETsを調整
   stepGoal: 8000,               // 1日の歩数の目標
+  yenRate: 150,                 // AIの利用料金を円で表示するときの、1ドルの円
 };
 
 export const DEFAULT_EXERCISES = [

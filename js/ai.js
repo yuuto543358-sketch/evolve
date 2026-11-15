@@ -9,6 +9,7 @@ import { S } from './store.js';
 import { computeGame, proteinOf, STAT_DEFS } from './game.js';
 import { dayEnergy, cardioKind, workoutKcal, cardioRecordKcal } from './calc.js';
 import { todayPlan } from './plan.js';
+import { recordUsage } from './aicost.js';
 import { today, addDays, parseYmd, byDateDesc } from './util.js';
 
 const API_BASE = 'https://api.openai.com/v1';
@@ -66,7 +67,7 @@ function errorFor(status, err) {
 // モデルによって使えない指定があるので、断られたらその指定を外してやり直す
 const unsupported = new Set();
 
-function buildBody({ system, messages, maxTokens, effort, schema, stream }) {
+function buildBody({ system, messages, maxTokens, effort, schema, stream, tools }) {
   const msgs = system ? [{ role: 'system', content: system }, ...messages] : messages;
   const body = { model: modelId(), messages: msgs };
   if (!unsupported.has('max_completion_tokens')) body.max_completion_tokens = maxTokens; else body.max_tokens = maxTokens;
@@ -76,7 +77,12 @@ function buildBody({ system, messages, maxTokens, effort, schema, stream }) {
       ? { type: 'json_object' }
       : { type: 'json_schema', json_schema: { name: 'result', strict: true, schema } };
   }
-  if (stream) body.stream = true;
+  if (tools && tools.length) body.tools = tools;
+  if (stream) {
+    body.stream = true;
+    // 使ったトークン数を、最後に教えてもらう（料金の計算に使う）
+    if (!unsupported.has('stream_options')) body.stream_options = { include_usage: true };
+  }
   return body;
 }
 
@@ -87,11 +93,14 @@ async function authHeaders() {
   return { 'content-type': 'application/json', authorization: `Bearer ${key}` };
 }
 
+/** @returns {Promise<{res: Response, model: string, chars: number}>} chars＝送った文字数（料金の推定に使う） */
 async function post(opts, signal, attempt = 0) {
   const headers = await authHeaders();
+  const body = buildBody(opts);
+  const text = JSON.stringify(body);
   let res;
   try {
-    res = await fetch(`${API_BASE}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(buildBody(opts)), signal });
+    res = await fetch(`${API_BASE}/chat/completions`, { method: 'POST', headers, body: text, signal });
   } catch (e) {
     if (e && e.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
     throw new AIError('AIに接続できませんでした。通信の状態を確認して、もう一度お試しください。', 'network');
@@ -99,17 +108,23 @@ async function post(opts, signal, attempt = 0) {
   if (!res.ok) {
     let err = null;
     try { err = (await res.json()).error; } catch { /* ignore */ }
-    if (res.status === 400 && attempt < 3 && err) {
+    if (res.status === 400 && attempt < 4 && err) {
       const m = `${err.param || ''} ${err.message || ''}`;
       let retry = false;
       if (/reasoning_effort/.test(m) && !unsupported.has('reasoning_effort')) { unsupported.add('reasoning_effort'); retry = true; }
       else if (/max_completion_tokens/.test(m) && !unsupported.has('max_completion_tokens')) { unsupported.add('max_completion_tokens'); retry = true; }
       else if (/response_format|json_schema/.test(m) && !unsupported.has('json_schema')) { unsupported.add('json_schema'); retry = true; }
+      else if (/stream_options/.test(m) && !unsupported.has('stream_options')) { unsupported.add('stream_options'); retry = true; }
       if (retry) return post(opts, signal, attempt + 1);
     }
     throw errorFor(res.status, err);
   }
-  return res;
+  return { res, model: body.model, chars: text.length };
+}
+
+/** 料金の記録（記録に失敗しても、AIの答えは止めない） */
+async function track(model, tag, usage, est) {
+  try { await recordUsage({ model, tag, usage, est }); } catch (e) { console.warn('料金の記録に失敗', e); }
 }
 
 function checkFinish(reason, refusal) {
@@ -117,11 +132,12 @@ function checkFinish(reason, refusal) {
 }
 
 /** 1回で答えをもらう（食事の見積もり・メニュー作成など） */
-export async function ask({ system, messages, maxTokens = 8000, effort = 'low', schema = null, signal = null }) {
-  const res = await post({ system, messages, maxTokens, effort, schema }, signal);
+export async function ask({ system, messages, maxTokens = 8000, effort = 'low', schema = null, signal = null, tag = 'other' }) {
+  const { res, model, chars } = await post({ system, messages, maxTokens, effort, schema }, signal);
   const data = await res.json();
   const choice = (data.choices && data.choices[0]) || {};
   const msg = choice.message || {};
+  await track(model, tag, data.usage, { i: chars / 2, o: (msg.content || '').length / 1.3 });
   checkFinish(choice.finish_reason, msg.refusal);
   if (choice.finish_reason === 'length' && schema) throw new AIError('AIの答えが途中で切れました。もう一度お試しください。', 'truncated');
   return { text: msg.content || '', usage: data.usage, model: data.model };
@@ -139,23 +155,40 @@ export async function askJSON(opts) {
   }
 }
 
-/** 文字が少しずつ届く形で答えをもらう（相談・ふりかえり） */
-export async function streamText({ system, messages, maxTokens = 16000, effort = 'medium', onText, signal = null }) {
-  const res = await post({ system, messages, maxTokens, effort, stream: true }, signal);
+/**
+ * 1回ぶんのやりとり。文字が少しずつ届く形で受け取り、AIが「道具を使いたい」と言ったときはその依頼も集める
+ * @returns {Promise<{text: string, toolCalls: {id, name, arguments}[], finish: string|null}>}
+ */
+async function streamRound({ system, messages, tools = null, maxTokens = 16000, effort = 'medium', onText, signal = null, tag = 'coach' }) {
+  const { res, model, chars } = await post({ system, messages, tools, maxTokens, effort, stream: true }, signal);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = ''; let full = ''; let finish = null; let refusal = '';
+  let buf = ''; let full = ''; let finish = null; let refusal = ''; let usage = null;
+  const calls = [];
   const handle = (dataLine) => {
     if (dataLine === '[DONE]') return;
     let ev;
     try { ev = JSON.parse(dataLine); } catch { return; }
     if (ev.error) throw errorFor(500, ev.error);
+    if (ev.usage) usage = ev.usage;
     const c = ev.choices && ev.choices[0];
     if (!c) return;
     const d = c.delta || {};
     if (d.refusal) refusal += d.refusal;
     if (d.content) { full += d.content; if (onText) onText(d.content, full); }
+    if (Array.isArray(d.tool_calls)) {
+      for (const tc of d.tool_calls) {
+        const i = Number.isInteger(tc.index) ? tc.index : 0;
+        const cur = calls[i] || (calls[i] = { id: '', name: '', arguments: '' });
+        if (tc.id) cur.id = tc.id;
+        if (tc.function) {
+          if (tc.function.name) cur.name = tc.function.name;
+          if (tc.function.arguments) cur.arguments += tc.function.arguments;
+        }
+      }
+    }
     if (c.finish_reason) finish = c.finish_reason;
   };
+  let failure = null;
   try {
     for (;;) {
       const { value, done } = await reader.read();
@@ -169,12 +202,68 @@ export async function streamText({ system, messages, maxTokens = 16000, effort =
       }
     }
   } catch (e) {
-    if (e instanceof AIError) throw e;
-    if (e && e.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
+    failure = e;
+  }
+  // 料金の記録（最後まで届かなかったときも、使った分は文字数からの推定で記録する）
+  const argChars = calls.reduce((t, c) => t + (c ? c.arguments.length + c.name.length : 0), 0);
+  await track(model, tag, usage, { i: chars / 2, o: (full.length + argChars) / 1.3 });
+  if (failure) {
+    if (failure instanceof AIError) throw failure;
+    if (failure && failure.name === 'AbortError') throw new AIError('中止しました。', 'aborted');
     throw new AIError('通信が途中で切れました。もう一度お試しください。', 'network');
   }
   checkFinish(finish, refusal);
-  return { text: full, stop: finish };
+  const toolCalls = calls.filter((c) => c && c.name).map((c, i) => ({ id: c.id || `call_${Date.now().toString(36)}_${i}`, name: c.name, arguments: c.arguments || '{}' }));
+  return { text: full, toolCalls, finish };
+}
+
+/** 文字が少しずつ届く形で答えをもらう（ふりかえりなど） */
+export async function streamText({ system, messages, maxTokens = 16000, effort = 'medium', onText, signal = null, tag = 'review' }) {
+  const r = await streamRound({ system, messages, maxTokens, effort, onText, signal, tag });
+  return { text: r.text, stop: r.finish };
+}
+
+/**
+ * 会話（コーチ）：AIが「記録する」などの道具を使えるやりとり。
+ * 道具を使う依頼が来たら execute で実行し、その結果をAIに返して、続きの答えをもらう。
+ *
+ * messages は会話の履歴（OpenAIのメッセージ形式）で、新しいやりとりはこの配列の後ろに足されていく。
+ *   {role:'user', content}
+ *   {role:'assistant', content, tool_calls?}
+ *   {role:'tool', tool_call_id, content, ui?}   ← ui は画面に出すためだけの情報（AIには送らない）
+ */
+export async function runChat({ system, messages, tools, toApi = (m) => m, execute, signal = null, tag = 'coach', maxRounds = 4, onRound, onText, onMessage }) {
+  for (let round = 0; round < maxRounds; round++) {
+    if (onRound) onRound(round);
+    const lastRound = round === maxRounds - 1;
+    const r = await streamRound({
+      system, messages: toApi(messages), tools: lastRound ? null : tools, maxTokens: 16000,
+      effort: round === 0 ? 'medium' : 'low', onText: (_, full) => { if (onText) onText(full); }, signal, tag,
+    });
+    if (!r.toolCalls.length) {
+      const msg = { role: 'assistant', content: r.text.trim() ? r.text : '（うまく答えられませんでした。もう一度聞いてみてください）' };
+      messages.push(msg);
+      if (onMessage) onMessage(msg);
+      return;
+    }
+    const asst = {
+      role: 'assistant', content: r.text || null,
+      tool_calls: r.toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })),
+    };
+    messages.push(asst);
+    if (onMessage) onMessage(asst);
+    // すべての依頼に必ず答えを返す（答えのない依頼が残ると、次のやりとりがエラーになるため）
+    for (const c of r.toolCalls) {
+      let out;
+      try { out = await execute(c); } catch (e) {
+        console.warn('道具の実行に失敗', e);
+        out = { content: JSON.stringify({ status: 'error', message: '記録中に問題が起きました' }), ui: { type: 'note', tone: 'warn', text: '記録できませんでした' } };
+      }
+      const tm = { role: 'tool', tool_call_id: c.id, content: out.content, ui: out.ui || null };
+      messages.push(tm);
+      if (onMessage) onMessage(tm);
+    }
+  }
 }
 
 /**
@@ -244,6 +333,8 @@ export function buildContext({ days = 14 } = {}) {
   lines.push(`ゲーム内ステータス: ${STAT_DEFS.map((s) => `${s.name}${g.stats[s.id]}`).join(' ')}`);
   lines.push('');
   lines.push(`# 今日（${t} ${WD[parseYmd(t).getDay()]}曜）`);
+  const now = new Date();
+  lines.push(`今の時刻:${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
   lines.push(`今日の予定:${plan ? plan.label : '未選択'}`);
   lines.push(`今日のカロリー: 摂取${e.hasIntake ? e.intake : '未記録'} / 消費の目安${e.burned ?? '不明'} / 収支${e.balance ?? '不明'}`);
   lines.push('');

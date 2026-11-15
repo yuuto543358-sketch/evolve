@@ -34,12 +34,12 @@ export function haptic(ms = 8) {
 /* ---------- ボトムシート ---------- */
 
 /** 下から出てくるシート。上部をつかんで下に引くと閉じられます */
-export function openSheet({ title = '', html = '', onMount, wide = false, onClose, subtitle = '' } = {}) {
+export function openSheet({ title = '', html = '', onMount, wide = false, onClose, subtitle = '', cls = '' } = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'sheet-wrap';
   wrap.innerHTML = `
     <div class="sheet-backdrop" data-close></div>
-    <div class="sheet ${wide ? 'sheet-wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title.replace(/<[^>]+>/g, ''))}">
+    <div class="sheet ${wide ? 'sheet-wide' : ''} ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title.replace(/<[^>]+>/g, ''))}">
       <div class="sheet-grab">
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-head">
@@ -385,8 +385,29 @@ function installSwipe() {
   }, true);
 }
 
+/**
+ * 画面の「見えている部分」の大きさを、CSSの変数（--vvh, --vvt）に入れておく。
+ * iPhoneでキーボードが出ると、見える部分が小さくなるので、
+ * シートをその中におさめて、入力欄がキーボードの下にかくれたりズレたりしないようにする。
+ */
+function trackViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const root = document.documentElement;
+  const set = () => {
+    root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+    root.style.setProperty('--vvt', `${Math.round(vv.offsetTop)}px`);
+    root.classList.toggle('kbd', window.innerHeight - vv.height > 120);
+  };
+  vv.addEventListener('resize', set);
+  vv.addEventListener('scroll', set);
+  window.addEventListener('orientationchange', () => setTimeout(set, 300));
+  set();
+}
+
 /** アプリ全体で一度だけ登録するイベント */
 export function installGlobalHandlers() {
+  trackViewport();
   // ステッパーの長押しで連続変更
   let holdTimer = null; let repeatTimer = null; let held = false;
   const stopHold = () => { clearTimeout(holdTimer); clearInterval(repeatTimer); holdTimer = repeatTimer = null; };
