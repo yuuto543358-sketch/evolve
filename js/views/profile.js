@@ -11,6 +11,7 @@ import { openAISetup } from '../aiui.js';
 import { exportBackup, restoreBackup, validateBackup, storageInfo } from '../backup.js';
 import { isDemo, setDemo, clearAll, deleteDatabase } from '../db.js';
 import { today, esc, fmtNum, diffDays, fmtDateLong, ymd } from '../util.js';
+import { checkForUpdate } from '../update.js';
 import { notify } from '../app.js';
 
 let showAllAch = false;
@@ -108,6 +109,7 @@ export function render(root, app) {
       ${row({ ic: 'dumbbell', color: '#1F8070', label: '種目の追加・編集', href: '#training?mode=strength&manage=1' })}
       ${row({ ic: 'bolt', color: '#7A68C9', label: '経験値のしくみ', act: 'xp' })}
       ${row({ ic: 'share', color: '#3B7FA8', label: 'ホーム画面に追加する方法', act: 'install' })}
+      ${row({ ic: 'download', color: '#5B6462', label: 'アプリの更新を確認', sub: `いまは v${APP_VERSION}`, act: 'update' })}
     </div>
 
     ${secH('データの保存・引っ越し')}
@@ -145,6 +147,7 @@ export function render(root, app) {
     if (act === 'ach-all') { showAllAch = !showAllAch; app.refresh(); return; }
     if (act === 'ai') { openAISetup(); return; }
     if (act === 'health') { openHealthImport(); return; }
+    if (act === 'update') { runUpdateCheck(); return; }
     if (act === 'stepgoal') { editStepGoal(); return; }
     if (act === 'profile') editProfile(app);
     else if (act === 'shake') editShake(app);
@@ -163,6 +166,15 @@ export function render(root, app) {
       if (f) doRestore(f);
     }
   };
+}
+
+/** 「アプリの更新を確認」：新しい版を探して、結果をお知らせする（見つかったときは「更新」のお知らせが出る） */
+async function runUpdateCheck() {
+  toast('新しいバージョンを探しています…', { icon: 'info', duration: 1600 });
+  const r = await checkForUpdate();
+  if (r === 'latest') toast(`最新版です（v${APP_VERSION}）`, { icon: 'check' });
+  else if (r === 'offline') toast('確認できませんでした。インターネットにつながってから、もう一度お試しください', { icon: 'info', duration: 4200 });
+  else if (r === 'unsupported') toast('このブラウザでは、更新の確認ができません', { icon: 'info', duration: 3600 });
 }
 
 async function showStorage(root) {

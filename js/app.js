@@ -8,6 +8,7 @@ import { installGlobalHandlers, toast, celebrateLevelUp, celebrateAchievement, c
 import { openQuickAdd } from './quick.js';
 import { maybeAskPlan } from './plan.js';
 import { getKey as primeAIKey } from './ai.js';
+import { registerSW } from './update.js';
 import { today } from './util.js';
 import * as home from './views/home.js';
 import * as training from './views/training.js';
@@ -227,34 +228,6 @@ async function requestPersist() {
       await navigator.storage.persist();
     }
   } catch { /* 対応していないブラウザは何もしない */ }
-}
-
-function registerSW() {
-  if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('./sw.js').then((reg) => {
-    const promptUpdate = (worker) => {
-      toast('新しいバージョンがあります', {
-        duration: 8000,
-        action: { label: '更新', onClick: () => worker.postMessage({ type: 'SKIP_WAITING' }) },
-      });
-    };
-    if (reg.waiting && navigator.serviceWorker.controller) promptUpdate(reg.waiting);
-    reg.addEventListener('updatefound', () => {
-      const nw = reg.installing;
-      if (!nw) return;
-      nw.addEventListener('statechange', () => {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) promptUpdate(nw);
-      });
-    });
-    // アプリを開き直したときに更新を確認
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
-  }).catch((e) => console.warn('SW登録に失敗', e));
-  let reloading = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloading) return;
-    reloading = true;
-    location.reload();
-  });
 }
 
 export { ACHIEVEMENTS };
