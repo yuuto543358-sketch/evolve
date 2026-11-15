@@ -27,6 +27,16 @@ function sortedExercises() {
   return [...S.exercises].sort((a, b) => (freq[b.id] || 0) - (freq[a.id] || 0) || (a.order ?? 0) - (b.order ?? 0)).map((e) => ({ ...e, freq: freq[e.id] || 0 }));
 }
 
+/** ほかの画面（AIのメニューなど）から、今回のメニューをまとめて入れる */
+export function presetCart(items) {
+  cart = items.filter((it) => exerciseById(it.exerciseId)).map((it) => {
+    const last = lastOf(it.exerciseId);
+    return { key: Math.random().toString(36).slice(2), exerciseId: it.exerciseId, reps: it.reps, sets: it.sets, weight: last ? last.weight : null };
+  });
+  mode = 'strength';
+  date = today();
+}
+
 function addToCart(ex, setsOverride = null) {
   if (cart.some((c) => c.exerciseId === ex.id)) return false;
   const last = lastOf(ex.id);

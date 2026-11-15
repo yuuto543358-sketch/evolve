@@ -296,6 +296,15 @@ export function mealEditor({ rec = null, slot = 'breakfast', date = today() } = 
     html: `<form class="form" onsubmit="return false">
       ${recents.length ? `<div class="field"><span class="field-label">最近の食事からワンタップ</span>
         <div class="suggest">${recents.map((r) => `<button type="button" class="suggest-chip" data-fill="${r.id}"><span>${esc(r.content)}</span><small>P${fmtNum(r.protein || 0, 1)}${r.fat ? ` F${fmtNum(r.fat, 1)}` : ''}</small></button>`).join('')}</div></div>` : ''}
+      ${!isShake ? `<div class="ai-meal">
+        <div class="ai-meal-h">${icon('spark', 16)}<strong>AIにおまかせ</strong><small>食べたものを書くか、写真を撮るだけ</small></div>
+        <div class="ai-meal-row">
+          <input class="input" type="text" name="aiText" placeholder="例：牛丼の並とみそ汁" maxlength="120" enterkeyhint="go">
+          <label class="ai-meal-cam file-btn" aria-label="写真で見積もる">${icon('camera', 20)}<input type="file" name="aiPhoto" accept="image/*"></label>
+        </div>
+        <button type="button" class="btn btn-soft btn-block" data-ai-est>${icon('spark', 16)}AIで見積もる</button>
+        <p class="ai-meal-note" data-ai-note hidden></p>
+      </div>` : ''}
       ${!isShake ? `<div class="field"><span class="field-label">食事内容 <em>任意</em></span>
         <input class="input" type="text" name="content" value="${esc(m.content || '')}" placeholder="例：鶏むね肉の定食" maxlength="80" enterkeyhint="done"></div>` : ''}
       <div class="field"><span class="field-label">タンパク質</span>
@@ -312,7 +321,26 @@ export function mealEditor({ rec = null, slot = 'breakfast', date = today() } = 
       <div class="sheet-actions">${isNew ? '<span></span>' : deleteButton()}<button type="button" class="btn btn-primary" data-save>${isNew ? '記録する' : '保存する'}</button></div>
     </form>`,
     onMount(body, close) {
+      const runAI = async (file) => {
+        const text = (val(body, 'aiText') || '').trim();
+        if (!text && !file) { toast('食べたものを書くか、写真を選んでください', { icon: 'info' }); return; }
+        const btn = body.querySelector('[data-ai-est]');
+        const note = body.querySelector('[data-ai-note]');
+        btn.disabled = true; btn.innerHTML = 'AIが見積もっています…';
+        const { estimateMeal } = await import('./aiui.js');
+        const r = await estimateMeal({ text, file });
+        btn.disabled = false; btn.innerHTML = `${icon('spark', 16)}AIで見積もる`;
+        if (!r) return;
+        const set = (name, v) => { const el = body.querySelector(`[name=${name}]`); if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); } };
+        set('content', r.name); set('protein', r.protein); set('fat', r.fat); set('kcal', r.kcal);
+        note.hidden = false;
+        note.innerHTML = `${icon('check', 14)}<span>下の欄に入れました：タンパク質${r.protein}g・脂質${r.fat}g・${r.kcal}kcal。${esc(r.comment)}　数字は目安です。ちがっていたら直してから「記録する」を押してください。</span>`;
+      };
+      body.onchange = (e) => {
+        if (e.target.name === 'aiPhoto') { const f = e.target.files[0]; e.target.value = ''; if (f) runAI(f); }
+      };
       body.onclick = async (e) => {
+        if (e.target.closest('[data-ai-est]')) { runAI(null); return; }
         const fill = e.target.closest('[data-fill]');
         if (fill) {
           const r = S.meals.find((x) => x.id === fill.dataset.fill);

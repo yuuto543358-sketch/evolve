@@ -11,6 +11,9 @@ import { notify } from '../app.js';
 import { openHealthImport } from '../health.js';
 import { todayPlan, planExercises, openPlanSheet } from '../plan.js';
 import { cardioKind, dayEnergy } from '../calc.js';
+import { hasKeySync } from '../ai.js';
+import { openCoach, openWeeklyReview, makeAIMenu, todayAIMenu, clearAIMenu, openAISetup } from '../aiui.js';
+import { presetCart } from './training.js';
 import { today, addDays, fmtNum, fmtDate, greeting, esc, parseYmd, ymd, pad, diffDays, relDay, byDateDesc } from '../util.js';
 
 let calMonth = null;
@@ -37,6 +40,7 @@ export function render(root, app) {
     ${activityCard()}
     ${secH('今日のおすすめ', planChip())}
     ${recommendCard(g, p)}
+    ${aiCard()}
     ${secH('ステータス', '<span class="sec-note">今週の伸び</span>')}
     ${statusCard(g, prevWeek)}
     ${secH(`${Number(t.slice(5, 7))}月の積み重ね`)}
@@ -54,6 +58,17 @@ export function render(root, app) {
     if (e.target.closest('[data-health]')) { openHealthImport(); return; }
     const de = e.target.closest('[data-daily-edit]');
     if (de) { dailyEditor({ date: de.dataset.dailyEdit }); return; }
+    const aiBtn = e.target.closest('[data-ai]');
+    if (aiBtn) {
+      const k = aiBtn.dataset.ai;
+      if (k === 'coach') openCoach();
+      else if (k === 'review') openWeeklyReview();
+      else if (k === 'menu') makeAIMenu();
+      else if (k === 'setup') openAISetup();
+      else if (k === 'menu-clear') clearAIMenu();
+      else if (k === 'menu-start') { const m = todayAIMenu(); if (m) { presetCart(m.items); app.go('training', { mode: 'strength' }); } }
+      return;
+    }
     if (e.target.closest('[data-plan]')) { openPlanSheet({ onPicked: () => app.refresh() }); return; }
     const cm = e.target.closest('[data-cal]');
     if (cm) {
@@ -179,6 +194,28 @@ function activityCard() {
   </section>`;
 }
 
+/** AIコーチの入口 */
+function aiCard() {
+  const ready = hasKeySync();
+  const menu = todayAIMenu();
+  const rv = S.meta.aiReview;
+  return `
+  ${secH('AIコーチ', ready ? '' : '<button type="button" class="sec-link" data-ai="setup">' + icon('settings', 14) + '設定する</button>')}
+  <section class="ai-card">
+    <button type="button" class="ai-main" data-ai="coach">
+      <span class="ai-orb">${icon('spark', 22)}</span>
+      <span class="ai-main-text"><strong>コーチに相談する</strong><small>${ready ? 'あなたの記録を見たうえで答えます' : 'APIキーを設定すると使えます'}</small></span>
+      ${icon('right', 18)}
+    </button>
+    <div class="ai-actions">
+      <button type="button" data-ai="menu">${icon('dumbbell', 17)}<span>${menu ? 'メニューを作り直す' : '今日のメニューを作る'}</span></button>
+      <button type="button" data-ai="review">${icon('growth', 17)}<span>今週のふりかえり</span></button>
+    </div>
+    ${menu ? `<button type="button" class="ai-foot" data-ai="menu-clear">AIのメニューをやめて、いつものおすすめにもどす</button>` : ''}
+    ${rv && !menu ? `<p class="ai-last">${icon('growth', 13)}前回のふりかえり：${esc(rv.text.replace(/\s+/g, ' ').slice(0, 44))}…</p>` : ''}
+  </section>`;
+}
+
 /** 「今日のおすすめ」の横に出す、今日の予定 */
 function planChip() {
   const plan = todayPlan();
@@ -201,7 +238,21 @@ function recommendCard(g, p) {
   const plan = todayPlan();
   const strengthToday = S.workouts.some((w) => w.date === t);
   const cardioToday = S.cardio.some((c) => c.date === t);
-  if (plan) {
+  const aiMenu = todayAIMenu();
+  if (aiMenu) {
+    // AIが作った今日のメニュー
+    if (strengthToday) {
+      recs.push({ ic: 'dumbbell', tone: 'green', done: true, title: '今日の筋トレ、おつかれさまでした', sub: 'ストレッチとしっかりした睡眠で、身体の回復も成長のうち。' });
+    } else if (aiMenu.items.length) {
+      recs.push({ ic: 'spark', tone: 'gold', title: `AI：${aiMenu.title}`, sub: aiMenu.note, menu: aiMenu.items.map((x) => `${x.name} ${x.reps}${unitLabel(x.unit)}×${x.sets}`), aiStart: true });
+    } else {
+      recs.push({ ic: 'moon', tone: 'sage', title: `AI：${aiMenu.title}`, sub: aiMenu.note });
+    }
+    if (aiMenu.cardio && !cardioToday) {
+      const k = cardioKind(aiMenu.cardio.kind);
+      recs.push({ ic: k.icon, tone: 'blue', title: `${k.name} ${aiMenu.cardio.minutes}分`, sub: 'AIのメニューに入っている有酸素運動です。', btn: '記録する', go: 'training', params: { mode: 'cardio', kind: aiMenu.cardio.kind, minutes: aiMenu.cardio.minutes } });
+    }
+  } else if (plan) {
     // 今日の予定に合わせたおすすめ
     const items = planExercises(plan);
     if (plan.id === 'rest') {
@@ -288,6 +339,7 @@ function recommendCard(g, p) {
         <span class="reco-ic">${icon(r.ic, 19)}</span>
         <div class="reco-main"><strong>${esc(r.title)}</strong>${r.menu ? `<ul class="reco-menu">${r.menu.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}<span>${esc(r.sub)}</span></div>
         ${r.shake ? `<button type="button" class="pill-btn gold" data-shake>${icon('plus', 13)}${S.settings.proteinPerShake}g</button>` : ''}
+        ${r.aiStart ? '<button type="button" class="pill-btn gold" data-ai="menu-start">はじめる</button>' : ''}
         ${r.btn ? `<button type="button" class="pill-btn" data-go="${r.go}" data-params='${JSON.stringify(r.params)}'>${r.btn}</button>` : ''}
         ${r.done ? `<span class="reco-done">${icon('check', 16)}</span>` : ''}
       </div>`).join('')}

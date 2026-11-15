@@ -6,6 +6,8 @@ import { icon, logoMark } from '../icons.js';
 import { openSheet, stepper, chips, choice, num, val, toast, confirmDialog, largeTitle, secH } from '../ui.js';
 import { ring } from '../charts.js';
 import { openHealthImport } from '../health.js';
+import { hasKeySync, AI_MODELS, modelId } from '../ai.js';
+import { openAISetup } from '../aiui.js';
 import { exportBackup, restoreBackup, validateBackup, storageInfo } from '../backup.js';
 import { isDemo, setDemo, clearAll, deleteDatabase } from '../db.js';
 import { today, esc, fmtNum, diffDays, fmtDateLong, ymd } from '../util.js';
@@ -88,6 +90,11 @@ export function render(root, app) {
       ${row({ ic: 'target', color: '#3B7FA8', label: '目指す身体', value: esc(goal.name), act: 'profile' })}
     </div>
 
+    ${secH('AI')}
+    <div class="group">
+      ${row({ ic: 'spark', color: '#7A68C9', label: 'AIの設定', sub: hasKeySync() ? `使えます ・ ${(AI_MODELS.find((m) => m.id === modelId()) || AI_MODELS[0]).label}` : 'APIキーを入れると、コーチに相談できます', act: 'ai' })}
+    </div>
+
     ${secH('連携')}
     <div class="group">
       ${row({ ic: 'heart', color: '#D2493E', label: 'Apple Watch・ヘルスケア', sub: S.meta.lastHealthImport ? `最後の取り込み：${relDays(S.meta.lastHealthImport)}` : '歩数・消費カロリー・ワークアウト・体重', act: 'health' })}
@@ -136,6 +143,7 @@ export function render(root, app) {
     if (!b) return;
     const act = b.dataset.act;
     if (act === 'ach-all') { showAllAch = !showAllAch; app.refresh(); return; }
+    if (act === 'ai') { openAISetup(); return; }
     if (act === 'health') { openHealthImport(); return; }
     if (act === 'stepgoal') { editStepGoal(); return; }
     if (act === 'profile') editProfile(app);

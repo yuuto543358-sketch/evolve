@@ -8,6 +8,7 @@ import { mealEditor, bodyEditor } from './records.js';
 import { notify } from './app.js';
 import { openCamera } from './camera.js';
 import { openHealthImport } from './health.js';
+import { openCoach } from './aiui.js';
 import { today, fmtNum } from './util.js';
 
 function slotByTime() {
@@ -42,6 +43,7 @@ export function openQuickAdd(app) {
         <span class="qt-ic">${icon(x.ic, 22)}</span>
         <strong>${x.label}</strong><small>${x.sub}</small>
       </button>`).join('')}</div>
+      <button type="button" class="qt-wide" data-q="coach"><span class="ic-sq" style="--sq:#7A68C9">${icon('spark', 16)}</span><span><strong>AIコーチに相談する</strong><small>記録を見たうえで、質問に答えます</small></span>${icon('right', 16)}</button>
       <button type="button" class="qt-wide" data-q="health"><span class="ic-sq" style="--sq:#D2493E">${icon('heart', 16)}</span><span><strong>Apple Watch・ヘルスケアから取り込む</strong><small>歩数・消費カロリー・ワークアウト・体重</small></span>${icon('right', 16)}</button>`,
     onMount(body, close) {
       body.addEventListener('click', async (e) => {
@@ -62,6 +64,7 @@ export function openQuickAdd(app) {
         // カメラはタップの直後に開く（iPhoneで傾きセンサーの許可を出すため）
         if (q === 'photo') { openCamera({ pose: 'front' }); return; }
         if (q === 'health') { setTimeout(() => openHealthImport(), 180); return; }
+        if (q === 'coach') { setTimeout(() => openCoach(), 180); return; }
         setTimeout(() => {
           if (q === 'strength') app.go('training', { mode: 'strength', date: t });
           else if (q === 'cardio') app.go('training', { mode: 'cardio', date: t });

@@ -7,6 +7,7 @@ import { icon } from './icons.js';
 import { installGlobalHandlers, toast, celebrateLevelUp, celebrateAchievement, confirmDialog, animateUI } from './ui.js';
 import { openQuickAdd } from './quick.js';
 import { maybeAskPlan } from './plan.js';
+import { getKey as primeAIKey } from './ai.js';
 import { today } from './util.js';
 import * as home from './views/home.js';
 import * as training from './views/training.js';
@@ -200,6 +201,7 @@ async function boot() {
     const { seedDemo } = await import('./demo.js');
     await seedDemo();
   }
+  try { await primeAIKey(); } catch { /* ignore */ }
   hideSplash();
   if (!S.profile || !S.profile.onboarded) {
     tabbar.hidden = true;
