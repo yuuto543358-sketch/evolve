@@ -9,7 +9,7 @@ import { openQuickAdd } from './quick.js';
 import { maybeAskPlan } from './plan.js';
 import { getKey as primeAIKey } from './ai.js';
 import { registerSW } from './update.js';
-import { today } from './util.js';
+import { today, esc } from './util.js';
 import * as home from './views/home.js';
 import * as training from './views/training.js';
 import * as nutrition from './views/nutrition.js';
@@ -93,7 +93,7 @@ function render(scrollTop = true) {
     tab.view.render(viewEl, app);
   } catch (err) {
     console.error(err);
-    viewEl.innerHTML = `<div class="page"><div class="card"><h2>表示中に問題が発生しました</h2><p class="muted">${String(err.message || err)}</p><button class="btn btn-primary" onclick="location.reload()">再読み込み</button></div></div>`;
+    viewEl.innerHTML = `<div class="page"><div class="card"><h2>表示中に問題が発生しました</h2><p class="muted">${esc(String(err.message || err))}</p><button class="btn btn-primary" data-reload>再読み込み</button></div></div>`;
   }
   if (lastTab !== current) {
     viewEl.classList.remove('view-enter');
@@ -194,7 +194,7 @@ async function boot() {
   try {
     await store.loadAll();
   } catch (err) {
-    viewEl.innerHTML = `<div class="page"><div class="card"><h2>データを読み込めませんでした</h2><p class="muted">${String(err.message || err)}</p><p class="muted small">プライベートブラウズでは保存できない場合があります。</p></div></div>`;
+    viewEl.innerHTML = `<div class="page"><div class="card"><h2>データを読み込めませんでした</h2><p class="muted">${esc(String(err.message || err))}</p><p class="muted small">プライベートブラウズでは保存できない場合があります。</p></div></div>`;
     hideSplash();
     return;
   }

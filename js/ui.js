@@ -209,13 +209,13 @@ export function stepper(name, value, { step = 1, min = 0, max = 9999, unit = '',
 
 export function chips(forName, values, current, { labels = null, cls = '' } = {}) {
   return `<div class="chips ${cls}" data-chips-for="${forName}">${values.map((v, i) => `
-    <button type="button" class="chip ${String(v) === String(current) ? 'on' : ''}" data-v="${v}">${labels ? labels[i] : v}</button>`).join('')}</div>`;
+    <button type="button" class="chip ${String(v) === String(current) ? 'on' : ''}" data-v="${esc(v)}">${esc(labels ? labels[i] : v)}</button>`).join('')}</div>`;
 }
 
 export function choice(name, options, current, cls = '') {
   return `<div class="choice ${cls}" data-choice="${name}">
     <input type="hidden" name="${name}" value="${esc(current ?? '')}">
-    ${options.map((o) => `<button type="button" class="chip ${String(o.value) === String(current) ? 'on' : ''}" data-v="${esc(o.value)}">${o.icon ? icon(o.icon, 18) : ''}<span>${o.label}</span></button>`).join('')}
+    ${options.map((o) => `<button type="button" class="chip ${String(o.value) === String(current) ? 'on' : ''}" data-v="${esc(o.value)}">${o.icon ? icon(o.icon, 18) : ''}<span>${esc(o.label)}</span></button>`).join('')}
   </div>`;
 }
 
@@ -273,8 +273,8 @@ function dateText(value) {
 }
 export function dateField(name, value) {
   return `<label class="date-pill">
-    ${icon('calendar', 15)}<span class="date-text">${dateText(value)}</span>${icon('down', 13)}
-    <input type="date" name="${name}" value="${value}" max="${today()}" aria-label="日付">
+    ${icon('calendar', 15)}<span class="date-text">${esc(dateText(value))}</span>${icon('down', 13)}
+    <input type="date" name="${esc(name)}" value="${esc(value)}" max="${today()}" aria-label="日付">
   </label>`;
 }
 
@@ -408,6 +408,8 @@ function trackViewport() {
 /** アプリ全体で一度だけ登録するイベント */
 export function installGlobalHandlers() {
   trackViewport();
+  // フォームのふつうの送信（ページの読み込み直し）は使わない。Enterを押しても、何も起きないようにする
+  document.addEventListener('submit', (e) => e.preventDefault(), true);
   // ステッパーの長押しで連続変更
   let holdTimer = null; let repeatTimer = null; let held = false;
   const stopHold = () => { clearTimeout(holdTimer); clearInterval(repeatTimer); holdTimer = repeatTimer = null; };
@@ -423,6 +425,7 @@ export function installGlobalHandlers() {
   ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => document.addEventListener(t, stopHold, true));
 
   document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-reload]')) { location.reload(); return; } // エラー画面の「再読み込み」
     const st = e.target.closest('.st-btn');
     if (st) {
       if (held) { held = false; return; }

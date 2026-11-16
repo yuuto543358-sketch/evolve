@@ -1,5 +1,5 @@
 // SVGで描くグラフ（外部ライブラリなし・オフラインでも動作）
-import { fmtNum, parseYmd } from './util.js';
+import { fmtNum, parseYmd, esc } from './util.js';
 
 /** 円形の進捗リング */
 export function ring(progress, { size = 120, stroke = 10, color = 'var(--primary)', track = 'var(--fill)', gold = false, grad = null } = {}) {
@@ -86,7 +86,7 @@ export function lineChart(pts, { unit = '', color = '#22806F', height = 190, dec
   const last = pts[n - 1];
   const lx = X(xs[n - 1]); const ly = Y(last.y);
   const scrubPts = pts.map((p, i) => [Math.round(X(xs[i]) * 10) / 10, Math.round(Y(p.y) * 10) / 10, p.label || `${parseYmd(p.x).getMonth() + 1}/${parseYmd(p.x).getDate()}`, `${fmtNum(p.y, decimals)}${unit}`]);
-  return `<svg class="line-chart" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="推移グラフ" data-pts='${JSON.stringify(scrubPts)}' data-h="${H}" data-pt="${padT}" data-pb="${padB}" data-color="${color}">
+  return `<svg class="line-chart" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="推移グラフ" data-pts="${esc(JSON.stringify(scrubPts))}" data-h="${H}" data-pt="${padT}" data-pb="${padB}" data-color="${color}">
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
     ${grid}${xl}
     <path d="${area}" fill="url(#${gid})"/>

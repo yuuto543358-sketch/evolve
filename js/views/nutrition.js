@@ -8,14 +8,14 @@ import { ring, miniBars } from '../charts.js';
 import { dateField, largeTitle, secH, countAttr } from '../ui.js';
 import { mealEditor, handleEditClick, SLOT_LABEL, SLOT_ICON } from '../records.js';
 import { notify } from '../app.js';
-import { today, esc, fmtNum, byDateDesc, addDays, parseYmd, fmtDateLong } from '../util.js';
+import { today, esc, fmtNum, byDateDesc, addDays, parseYmd, fmtDateLong, isYmd } from '../util.js';
 
 let date = today();
 let showCalories = false;
 
 export function render(root, app) {
   const p = app.params();
-  if (p.date) date = p.date;
+  if (isYmd(p.date)) date = p.date; // URLから来た文字は、日付の形のものだけ使う
   app.clearParams();
   if (date > today()) date = today();
   try { showCalories = localStorage.getItem('evolve:showKcal') === '1'; } catch { /* ignore */ }

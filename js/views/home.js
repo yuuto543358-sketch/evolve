@@ -372,7 +372,7 @@ function recommendCard(g, p) {
         <div class="reco-main"><strong>${esc(r.title)}</strong>${r.menu ? `<ul class="reco-menu">${r.menu.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}<span>${esc(r.sub)}</span></div>
         ${r.shake ? `<button type="button" class="pill-btn gold" data-shake>${icon('plus', 13)}${S.settings.proteinPerShake}g</button>` : ''}
         ${r.aiStart ? '<button type="button" class="pill-btn gold" data-ai="menu-start">はじめる</button>' : ''}
-        ${r.btn ? `<button type="button" class="pill-btn" data-go="${r.go}" data-params='${JSON.stringify(r.params)}'>${r.btn}</button>` : ''}
+        ${r.btn ? `<button type="button" class="pill-btn" data-go="${esc(r.go)}" data-params="${esc(JSON.stringify(r.params))}">${r.btn}</button>` : ''}
         ${r.done ? `<span class="reco-done">${icon('check', 16)}</span>` : ''}
       </div>`).join('')}
   </section>`;

@@ -86,7 +86,8 @@ export async function openAISetup({ onReady = null, diag = false } = {}) {
         <ul class="steps">
           <li>料金は<b>使った分だけ</b>かかります。ChatGPTの月額プラン（Plusなど）とは別の料金です</li>
           <li>OpenAIの「Billing」で自動チャージ（Auto recharge）をオフにしておくと、入れたクレジットがなくなったら止まるので安心です</li>
-          <li>APIキーは<b>このiPhoneの中にだけ</b>保存します。バックアップファイルには入りません。ほかの人には教えないでください</li>
+          <li>APIキーは<b>このiPhoneの中にだけ</b>保存します（GitHubにも、バックアップファイルにも入りません）。通信先は、アプリの中のしくみで<b>OpenAIだけ</b>に限っています。ほかの人には教えず、画面の写真にも写さないでください</li>
+          <li>もしキーを人に見せてしまったときや、iPhoneをなくしたときは、OpenAIの「API keys」でそのキーを<b>削除（Revoke）</b>して、作り直してください。入れておくクレジットを少なめにしておくと、もしものときの被害も小さくなります</li>
           <li>AIを使うときは、相談の内容と、あなたの記録のまとめ（体重・運動・食事など）がOpenAIのAIに送られます</li>
           <li>コーチとの会話で話した食事や運動は、AIが自動で記録します。記録は会話の中の「修正」「取り消す」で、いつでも直せます</li>
           <li>利用料金は、ホームの「AIの利用料金」で目安を確かめられます</li>
@@ -456,7 +457,7 @@ export function makeAIMenu() {
         if (!ex) return null;
         return { exerciseId: ex.id, name: ex.name, unit: ex.unit, reps: Math.max(1, Math.min(ex.unit === 'sec' ? 600 : 200, Math.round(it.reps) || 10)), sets: Math.max(1, Math.min(6, Math.round(it.sets) || 3)) };
       }).filter(Boolean).slice(0, 4);
-      const cardio = r.cardio_kind && r.cardio_kind !== 'none' && r.cardio_minutes > 0 ? { kind: r.cardio_kind, minutes: Math.max(5, Math.min(120, Math.round(r.cardio_minutes))) } : null;
+      const cardio = ['walk', 'run', 'cycle'].includes(r.cardio_kind) && r.cardio_minutes > 0 ? { kind: r.cardio_kind, minutes: Math.max(5, Math.min(120, Math.round(r.cardio_minutes))) } : null;
       await store.setMeta({ aiMenu: { date: today(), title: String(r.title || 'AIのおすすめメニュー').slice(0, 24), note: String(r.note || '').slice(0, 200), items, cardio } });
       toast('AIが今日のメニューを作りました', { icon: 'spark' });
       app.refresh();
@@ -543,7 +544,7 @@ function usageHTML() {
     ${sm.models.length ? `<p class="u-h">AIの種類ごと（累計）</p><div class="group u-group">${sm.models.map((m) => `<div class="u-row"><span class="u-name">${esc(m.model)}<small>${m.n}回 ・ 入力${cost.fmtTokens(m.i)} 出力${cost.fmtTokens(m.o)}</small></span><span class="u-val">${m.known ? cell({ usd: m.usd }) : '<b class="num">料金不明</b><small>下で単価を入れてください</small>'}</span></div>`).join('')}</div>` : ''}
     ${estNote}
     <p class="u-h">料金の計算（目安）</p>
-    <form class="form u-form" onsubmit="return false">
+    <form class="form u-form">
       <p class="hint top">いま使っているAI「${esc(model)}」の単価（100万トークンあたり・ドル）です。OpenAIの料金表が変わったときや、料金不明と出たときは、ここで直せます。</p>
       <div class="field"><span class="field-label">入力 <em>送った文章</em></span>${stepper('pin', pr.in, { step: 0.05, min: 0, max: 1000, unit: '$', decimals: 2, placeholder: '0' })}</div>
       <div class="field"><span class="field-label">入力（キャッシュ） <em>空欄＝入力と同じ</em></span>${stepper('pcache', pr.cached, { step: 0.01, min: 0, max: 1000, unit: '$', decimals: 2, placeholder: '' })}</div>

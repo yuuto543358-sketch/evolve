@@ -1,0 +1,13 @@
+# 秘密の情報（APIキー・パスワード・証明書など）は、絶対にGitHubに入れないための設定
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets*
+*.secret
+# 作業用のファイル
+node_modules/
+.DS_Store
+*.log

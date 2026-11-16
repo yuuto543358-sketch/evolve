@@ -127,7 +127,7 @@ export function editWorkout(w) {
   const repVals = unit === 'sec' ? [20, 30, 45, 60, 90, 120] : [5, 8, 10, 12, 15, 20, 30];
   openSheet({
     title: esc(w.exerciseName),
-    html: `<form class="form" onsubmit="return false">${healthNote(w)}
+    html: `<form class="form">${healthNote(w)}
       <div class="field"><span class="field-label">日付</span>${dateField('date', w.date)}</div>
       <div class="field"><span class="field-label">${unit === 'sec' ? '時間（1セット）' : '回数（1セット）'}</span>
         ${stepper('reps', w.reps, { step: unit === 'sec' ? 5 : 1, min: 1, max: 1000, unit: unitLabel(unit) })}
@@ -193,7 +193,7 @@ function healthNote(rec) {
 export function editCardio(c) {
   openSheet({
     title: c.label ? esc(c.label) : cardioKind(c.kind).name,
-    html: `<form class="form" onsubmit="return false">${healthNote(c)}${cardioFormHTML(c)}
+    html: `<form class="form">${healthNote(c)}${cardioFormHTML(c)}
       <div class="field"><span class="field-label">名前 <em>任意・「その他」のとき表示</em></span>
         <input class="input" type="text" name="label" value="${esc(c.label || '')}" maxlength="20" placeholder="例：筋トレ・ヨガ・水泳"></div>
       <div class="field"><span class="field-label">消費カロリー <em>任意・空欄なら自動で計算</em></span>
@@ -233,7 +233,7 @@ export function dailyEditor({ rec = null, date = today() } = {}) {
   openSheet({
     title: isNew ? '歩数・活動を記録' : '歩数・活動の修正',
     subtitle: fmtDateLong(d.date),
-    html: `<form class="form" onsubmit="return false">${healthNote(d)}
+    html: `<form class="form">${healthNote(d)}
       <div class="field"><span class="field-label">歩数</span>
         ${stepper('steps', d.steps, { step: 500, min: 0, max: 100000, unit: '歩', placeholder: '0' })}
         ${chips('steps', [3000, 5000, 8000, 10000], d.steps, { labels: ['3千', '5千', '8千', '1万'] })}</div>
@@ -294,7 +294,7 @@ export function mealEditor({ rec = null, slot = 'breakfast', date = today() } = 
   const recents = isNew ? recentMeals(m.slot) : [];
   openSheet({
     title: isNew ? `${SLOT_LABEL[m.slot]}を記録` : (isShake ? 'プロテイン' : `${SLOT_LABEL[m.slot]}の記録`),
-    html: `<form class="form" onsubmit="return false">${isNew ? '' : healthNote(m)}
+    html: `<form class="form">${isNew ? '' : healthNote(m)}
       ${recents.length ? `<div class="field"><span class="field-label">最近の食事からワンタップ</span>
         <div class="suggest">${recents.map((r) => `<button type="button" class="suggest-chip" data-fill="${r.id}"><span>${esc(r.content)}</span><small>P${fmtNum(r.protein || 0, 1)}${r.fat ? ` F${fmtNum(r.fat, 1)}` : ''}</small></button>`).join('')}</div></div>` : ''}
       ${!isShake ? `<div class="ai-meal">
@@ -385,7 +385,7 @@ export function bodyEditor({ rec = null, date = today() } = {}) {
   const b = rec || { date, weight: lastBody('weight') || (S.profile && S.profile.weight), bodyFat: lastBody('bodyFat'), muscle: lastBody('muscle'), waist: lastBody('waist') };
   openSheet({
     title: isNew ? '身体測定を記録' : '身体測定の記録',
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form">
       ${isNew ? '<p class="hint top">前回の値が入っています。変わったところだけ調整してください。測っていない項目は空欄でOK。</p>' : healthNote(b)}
       <div class="field"><span class="field-label">体重</span>${stepper('weight', b.weight, { step: 0.1, min: 20, max: 250, unit: 'kg', decimals: 1, placeholder: '65.0' })}</div>
       <div class="field"><span class="field-label">体脂肪率 <em>任意</em></span>${stepper('bodyFat', b.bodyFat, { step: 0.1, min: 2, max: 60, unit: '%', decimals: 1, placeholder: '' })}</div>

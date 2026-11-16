@@ -28,7 +28,7 @@ function mapHKType(hk) {
   const k = String(hk || '').replace('HKWorkoutActivityType', '');
   const m = HK_TYPES[k];
   if (m) return { kind: m[0], label: m[1] };
-  return { kind: 'other', label: k || 'ワークアウト' };
+  return { kind: 'other', label: String(k || 'ワークアウト').slice(0, 40) }; // 読み込んだファイルの文字は、長さを区切る
 }
 
 function mapTextType(s) {
@@ -413,7 +413,7 @@ function previewHTML(result, label) {
       <input type="checkbox" name="${key}" ${count && on ? 'checked' : ''} ${count ? '' : 'disabled'}>
       <span class="imp-check">${icon('check', 14)}</span>
     </label>`;
-  const wSample = a.newWorkouts.slice(-3).reverse().map((w) => `${fmtDate(w.date, { weekday: false })} ${w.label || { run: 'ランニング', walk: 'ウォーキング', cycle: 'サイクリング' }[w.kind] || 'ワークアウト'}${w.minutes ? ` ${w.minutes}分` : ''}${w.distanceKm ? ` ${w.distanceKm}km` : ''}`).join(' / ');
+  const wSample = a.newWorkouts.slice(-3).reverse().map((w) => `${fmtDate(w.date, { weekday: false })} ${esc(w.label || { run: 'ランニング', walk: 'ウォーキング', cycle: 'サイクリング' }[w.kind] || 'ワークアウト')}${w.minutes ? ` ${w.minutes}分` : ''}${w.distanceKm ? ` ${w.distanceKm}km` : ''}`).join(' / ');
   return `
     <p class="imp-label">${label}</p>
     <div class="group imp-group">

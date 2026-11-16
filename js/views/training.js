@@ -6,7 +6,7 @@ import { icon } from '../icons.js';
 import { segmented, stepper, chips, dateField, num, val, openSheet, toast, choice, confirmDialog, largeTitle, secH } from '../ui.js';
 import { workoutRow, cardioRow, handleEditClick, unitLabel, workoutText, cardioFormHTML, updateCardioEstimate } from '../records.js';
 import { notify } from '../app.js';
-import { today, esc, fmtNum, byDateDesc, addDays, fmtDateLong, fmtDate, relDay, groupBy } from '../util.js';
+import { today, esc, fmtNum, byDateDesc, addDays, fmtDateLong, fmtDate, relDay, groupBy, isYmd } from '../util.js';
 import { emptyState } from '../records.js';
 
 let mode = 'strength';
@@ -56,8 +56,9 @@ function addToCart(ex, setsOverride = null) {
 
 export function render(root, app) {
   const p = app.params();
-  if (p.mode) mode = p.mode;
-  if (p.date) date = p.date;
+  // URLから来た文字は、決まった選択肢・日付の形のものだけ使う
+  if (['strength', 'cardio', 'history'].includes(p.mode)) mode = p.mode;
+  if (isYmd(p.date)) date = p.date;
   if (p.add) {
     // 複数の種目をまとめて追加できる（カンマ区切り）
     for (const id of String(p.add).split(',')) {
@@ -65,7 +66,7 @@ export function render(root, app) {
       if (ex) addToCart(ex, Number(p.sets) || null);
     }
   }
-  if (p.kind) { cardioDraft.kind = p.kind; cardioDraft.touched = false; }
+  if (CARDIO_KINDS.some((k) => k.id === p.kind)) { cardioDraft.kind = p.kind; cardioDraft.touched = false; }
   if (p.minutes) {
     const lastK = S.cardio.filter((c) => c.kind === cardioDraft.kind).sort(byDateDesc)[0];
     cardioDraft.minutes = Number(p.minutes); cardioDraft.distanceKm = null; cardioDraft.touched = true;
@@ -274,7 +275,7 @@ function exerciseEditor(app, ex) {
   const e0 = ex || { name: '', unit: 'reps', kcalPer: 0.4, useWeight: false, part: 'upper' };
   openSheet({
     title: isNew ? '種目を追加' : '種目を編集',
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form">
       <div class="field"><span class="field-label">種目名</span><input class="input" type="text" name="name" value="${esc(e0.name)}" maxlength="30" placeholder="例：バーピー"></div>
       <div class="field"><span class="field-label">記録のしかた</span>${choice('unit', [{ value: 'reps', label: '回数' }, { value: 'sec', label: '秒数' }], e0.unit)}</div>
       <div class="field"><span class="field-label">鍛える部位</span>${choice('part', [{ value: 'upper', label: '上半身' }, { value: 'lower', label: '下半身' }, { value: 'core', label: '体幹' }], e0.part || 'upper')}</div>

@@ -1,7 +1,7 @@
 // バックアップ（書き出し）と復元（読み込み）
 import * as db from './db.js';
 import { S, APP_VERSION, SCHEMA_VERSION, setMeta } from './store.js';
-import { ymd } from './util.js';
+import { ymd, isYmd } from './util.js';
 
 function bufToBase64(buf) {
   const bytes = new Uint8Array(buf);
@@ -70,27 +70,110 @@ export async function exportBackup({ includePhotos = true } = {}) {
 }
 
 export function validateBackup(obj) {
-  if (!obj || obj.app !== 'EVOLVE' || !obj.data) throw new Error('EVOLVEのバックアップファイルではないようです');
+  if (!obj || typeof obj !== 'object' || obj.app !== 'EVOLVE' || !obj.data || typeof obj.data !== 'object') throw new Error('EVOLVEのバックアップファイルではないようです');
   if (obj.schema > SCHEMA_VERSION) throw new Error('新しいバージョンのアプリで作られたバックアップです。アプリを更新してください');
   return true;
 }
 
-/** バックアップから復元（今のデータは置き換えられます） */
+/* ---------- 読み込むファイルの検査 ----------
+ * バックアップのファイルは「外から来る文字」です。だれかに細工されたファイルや、こわれたファイルを読み込んでも、
+ * アプリが壊れたり、画面に危ない文字が出たりしないよう、保存する前に、形を確かめて整えます。
+ * （画面に出すときにも、文字はすべて安全な形に直して出します。これは、その前の、もう1つの守りです）
+ */
+const KEY_RE = /^[A-Za-z0-9_.:-]{1,80}$/;        // 項目の名前
+const ID_RE = /^[A-Za-z0-9_.:-]{1,80}$/;         // 記録のID
+const TOKEN_RE = /^[A-Za-z0-9_.:-]{0,80}$/;      // 「breakfast」「run」のような、決まった言葉の項目
+const TOKEN_FIELDS = new Set(['slot', 'kind', 'unit', 'part', 'pose', 'source', 'exerciseId', 'goal', 'sex', 'aiModel']);
+const DATE_FIELDS = new Set(['date', 'startDate', 'planAsked']);
+const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_STR = 20000;
+const MAX_THUMB = 600000;
+const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+function cleanValue(v, key = '', depth = 0) {
+  if (v === null || typeof v === 'boolean') return v;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v === 'string') {
+    if (key === 'thumb') return v.length <= MAX_THUMB && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v) ? v : undefined;
+    if (TOKEN_FIELDS.has(key) && !TOKEN_RE.test(v)) return undefined;
+    if (DATE_FIELDS.has(key) && !isYmd(v)) return undefined;
+    return v.length > MAX_STR ? v.slice(0, MAX_STR) : v;
+  }
+  if (depth >= 6) return undefined;
+  if (Array.isArray(v)) return v.slice(0, 20000).map((x) => cleanValue(x, key, depth + 1)).filter((x) => x !== undefined);
+  if (isPlain(v)) {
+    const o = {};
+    for (const [k, x] of Object.entries(v)) {
+      if (!KEY_RE.test(k) || BAD_KEYS.has(k)) continue;
+      const c = cleanValue(x, k, depth + 1);
+      if (c !== undefined) o[k] = c;
+    }
+    return o;
+  }
+  return undefined;
+}
+
+function cleanRecord(store, r) {
+  if (!isPlain(r) || typeof r.id !== 'string' || !ID_RE.test(r.id)) return null;
+  if (store !== 'exercises' && !isYmd(r.date)) return null;
+  const c = cleanValue(r);
+  return isPlain(c) && typeof c.id === 'string' ? c : null;
+}
+
+/** バックアップの中身を検査して、保存してよい形に整える（問題のある記録は取りのぞく） */
+export function sanitizeBackup(obj) {
+  const d = obj.data;
+  let dropped = 0;
+  const records = {};
+  for (const s of db.RECORD_STORES) {
+    const list = Array.isArray(d[s]) ? d[s] : [];
+    records[s] = [];
+    for (const r of list.slice(0, 100000)) {
+      const c = cleanRecord(s, r);
+      if (c) records[s].push(c); else dropped++;
+    }
+  }
+  const achievements = {};
+  if (isPlain(d.achievements)) {
+    for (const [k, v] of Object.entries(d.achievements)) if (KEY_RE.test(k) && !BAD_KEYS.has(k) && isYmd(v)) achievements[k] = v;
+  }
+  const photoBlobs = {};
+  const blobs = isPlain(obj.photoBlobs) ? obj.photoBlobs : {};
+  for (const [id, v] of Object.entries(blobs)) {
+    if (!ID_RE.test(id) || BAD_KEYS.has(id) || !isPlain(v) || typeof v.base64 !== 'string' || v.base64.length > 60 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(v.base64)) { dropped++; continue; }
+    photoBlobs[id] = { type: /^image\/(jpeg|png|webp|heic|heif)$/.test(v.type) ? v.type : 'image/jpeg', base64: v.base64 };
+  }
+  const profile = isPlain(d.profile) ? cleanValue(d.profile) : null;
+  const settings = isPlain(d.settings) ? cleanValue(d.settings) : null;
+  const meta = isPlain(d.meta) ? cleanValue(d.meta) : {};
+  // 数・オンオフの項目は、その型のものだけ残す（文字が入っていたら取りのぞく）
+  const only = (o, keys, type) => { if (o) for (const k of keys) if (k in o && typeof o[k] !== type) delete o[k]; };
+  only(profile, ['age', 'height', 'weight', 'proteinGoal', 'fatLimit', 'updatedAt'], 'number');
+  only(profile, ['onboarded'], 'boolean');
+  only(settings, ['proteinPerShake', 'stepGoal', 'yenRate'], 'number');
+  only(settings, ['kcalWeightAdjust', 'useSpeedMets'], 'boolean');
+  return { profile, settings, meta, achievements, records, photoBlobs, dropped };
+}
+
+/** バックアップから復元（今のデータは置き換えられます）。先に検査して、問題があれば今のデータには手をつけません */
 export async function restoreBackup(obj) {
   validateBackup(obj);
-  const d = obj.data;
+  const c = sanitizeBackup(obj);
+  // 写真の中身は、先に変換できるか確かめる（途中で失敗して、半端な状態にならないように）
+  const blobs = [];
+  for (const [id, v] of Object.entries(c.photoBlobs)) {
+    try { blobs.push([id, { type: v.type, data: base64ToBuf(v.base64) }]); } catch { c.dropped++; }
+  }
   await db.clearAll();
-  if (d.profile) await db.kvSet('profile', d.profile);
-  if (d.settings) await db.kvSet('settings', d.settings);
-  await db.kvSet('meta', { ...(d.meta || {}), restoredAt: Date.now() });
-  await db.kvSet('achievements', d.achievements || {});
+  if (c.profile) await db.kvSet('profile', c.profile);
+  if (c.settings) await db.kvSet('settings', c.settings);
+  await db.kvSet('meta', { ...c.meta, restoredAt: Date.now() });
+  await db.kvSet('achievements', c.achievements);
   for (const s of db.RECORD_STORES) {
-    if (Array.isArray(d[s]) && d[s].length) await db.bulkPut(s, d[s].filter((r) => r && r.id));
+    if (c.records[s].length) await db.bulkPut(s, c.records[s]);
   }
-  const blobs = obj.photoBlobs || {};
-  for (const [id, v] of Object.entries(blobs)) {
-    await db.put('photoBlobs', { type: v.type, data: base64ToBuf(v.base64) }, id);
-  }
+  for (const [id, v] of blobs) await db.put('photoBlobs', v, id);
+  return { dropped: c.dropped };
 }
 
 export async function storageInfo() {

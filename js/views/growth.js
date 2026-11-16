@@ -29,7 +29,7 @@ const METRICS = [
 
 export function render(root, app) {
   const p = app.params();
-  if (p.tab) tab = p.tab;
+  if (p.tab === 'body' || p.tab === 'photo') tab = p.tab; // URLから来た文字は、決まった選択肢だけ使う
   const openBody = p.add === 'body';
   app.clearParams();
 

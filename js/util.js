@@ -20,6 +20,13 @@ export function parseYmd(s) {
   return new Date(y, m - 1, d);
 }
 
+/** 「2026-11-16」の形の、実在する日付か（URLや読み込んだファイルから来た文字を、そのまま使わないために使う） */
+export function isYmd(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = parseYmd(s);
+  return !Number.isNaN(d.getTime()) && ymd(d) === s;
+}
+
 export function addDays(s, n) {
   const d = parseYmd(s);
   d.setDate(d.getDate() + n);

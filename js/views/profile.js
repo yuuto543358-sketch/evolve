@@ -190,7 +190,7 @@ function editProfile(app) {
   const p = S.profile || {};
   openSheet({
     title: 'プロフィールを編集',
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form">
       <div class="field"><span class="field-label">年齢</span>${stepper('age', p.age, { step: 1, min: 10, max: 100, unit: '歳' })}</div>
       <div class="field"><span class="field-label">身長</span>${stepper('height', p.height, { step: 1, min: 100, max: 230, unit: 'cm' })}</div>
       <div class="field"><span class="field-label">性別 <em>任意・基礎代謝の目安に使用</em></span>${choice('sex', [{ value: '', label: '未設定' }, { value: 'male', label: '男性' }, { value: 'female', label: '女性' }], p.sex || '')}</div>
@@ -221,7 +221,7 @@ function editProfile(app) {
 function editShake(app) {
   openSheet({
     title: 'プロテイン1杯の量',
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form">
       <div class="field"><span class="field-label">1杯あたりのタンパク質</span>${stepper('per', S.settings.proteinPerShake, { step: 1, min: 1, max: 100, unit: 'g' })}
         ${chips('per', [15, 20, 25, 30], S.settings.proteinPerShake)}</div>
       <p class="hint">お使いのプロテインのパッケージに書かれている「1食あたりのたんぱく質」を入れてください。</p>
@@ -241,7 +241,7 @@ function editKcal(app) {
   const s = S.settings;
   openSheet({
     title: '消費カロリーの計算',
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form">
       <p class="hint top">消費カロリーは推定値（目安）です。実際は体重・強度・動作の速さなどで変わります。</p>
       <div class="field"><span class="field-label">体重で補正する（筋トレ）</span>${choice('adj', [{ value: '1', label: 'する' }, { value: '0', label: 'しない' }], s.kcalWeightAdjust ? '1' : '0')}
         <p class="hint">種目ごとの値は体重65kgの人を基準にしています。「する」にすると最新の体重に合わせて調整します。</p></div>
@@ -330,14 +330,15 @@ async function doExport() {
 
 async function doRestore(file) {
   try {
+    if (file.size > 300 * 1024 * 1024) throw new Error('ファイルが大きすぎます');
     const text = await file.text();
     const obj = JSON.parse(text);
     validateBackup(obj);
     const when = obj.exportedAt ? new Date(obj.exportedAt) : null;
     const ok = await confirmDialog(`${when ? `${ymd(when)} に作成された` : ''}バックアップから復元しますか？<br><small>今この端末にある記録は、バックアップの内容に置き換わります。</small>`, { ok: '復元する', danger: true });
     if (!ok) return;
-    await restoreBackup(obj);
-    toast('復元しました。再読み込みします…');
+    const { dropped } = await restoreBackup(obj);
+    toast(dropped ? `復元しました（形がおかしい${dropped}件は読み込みませんでした）。再読み込みします…` : '復元しました。再読み込みします…', { duration: dropped ? 4200 : 2600 });
     setTimeout(() => { location.hash = '#home'; location.reload(); }, 800);
   } catch (err) {
     console.error(err);
@@ -380,7 +381,7 @@ function relDays(ts) {
 function editStepGoal() {
   openSheet({
     title: '1日の歩数の目標',
-    html: `<form class="form" onsubmit="return false">
+    html: `<form class="form">
       <div class="field"><span class="field-label">目標の歩数</span>${stepper('goal', S.settings.stepGoal || 8000, { step: 500, min: 1000, max: 30000, unit: '歩' })}
         ${chips('goal', [5000, 6000, 8000, 10000], S.settings.stepGoal || 8000, { labels: ['5千', '6千', '8千', '1万'] })}</div>
       <p class="hint">Apple Watchから取り込んだ歩数を、ホームでこの目標と比べて表示します。</p>

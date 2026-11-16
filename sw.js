@@ -1,6 +1,6 @@
 // EVOLVE Service Worker：オフラインでも開けるようにアプリ本体を保存します
 // アプリを更新したら VERSION の数字を上げてください（古いキャッシュは自動で削除されます）
-const VERSION = 'evolve-v1.9.3';
+const VERSION = 'evolve-v1.9.4';
 
 const APP_SHELL = [
   './',
@@ -29,6 +29,7 @@ const APP_SHELL = [
   './js/aitools.js',
   './js/aicost.js',
   './js/update.js',
+  './js/boot.js',
   './js/views/home.js',
   './js/views/training.js',
   './js/views/nutrition.js',
